@@ -51,12 +51,15 @@ impl Api {
             let account_data = res.json::<models::Summary>().await?;
             Ok(account_data)
         } else {
-            let error = res.json::<serde_json::Value>().await?;
-            Err(anyhow!(
-                "Failed to get summary {}: {}",
-                self.auth.sub,
-                error
-            ))
+            let status = res.status();
+            if let Ok(error) = res.json::<serde_json::Value>().await {
+                return Err(anyhow!(
+                    "Failed to get summary {}: {status}: {error}",
+                    self.auth.sub,
+                ));
+            } else {
+                return Err(anyhow!("Failed to get summary {}: {status}", self.auth.sub));
+            }
         }
     }
 
@@ -84,13 +87,20 @@ impl Api {
             let store = res.json::<models::Store>().await?;
             Ok(store)
         } else {
-            let error = res.json::<serde_json::Value>().await?;
-            return Err(anyhow!(
-                "Failed to get store {} {}: {}",
-                currency_type,
-                character.archetype,
-                error
-            ));
+            let status = res.status();
+            if let Ok(error) = res.json::<serde_json::Value>().await {
+                return Err(anyhow!(
+                    "Failed to get store {} {}: {status}: {error}",
+                    currency_type,
+                    character.archetype
+                ));
+            } else {
+                return Err(anyhow!(
+                    "Failed to get store {} {}: {status}",
+                    currency_type,
+                    character.archetype
+                ));
+            }
         }
     }
 
@@ -106,8 +116,12 @@ impl Api {
             let master_data = res.json::<models::MasterData>().await?;
             Ok(master_data)
         } else {
-            let error = res.json::<serde_json::Value>().await?;
-            Err(anyhow!("Failed to get master data: {}", error))
+            let status = res.status();
+            if let Ok(error) = res.json::<serde_json::Value>().await {
+                Err(anyhow!("Failed to get master data: {status}: {error}"))
+            } else {
+                Err(anyhow!("Failed to get master data: {status}"))
+            }
         }
     }
 
@@ -124,8 +138,7 @@ impl Api {
             self.auth = auth.clone();
             Ok(auth)
         } else {
-            let error = res.json::<serde_json::Value>().await?;
-            Err(anyhow!("Failed to refresh auth: {}", error))
+            Err(anyhow!("Failed to refresh auth: {}", res.status()))
         }
     }
 }
