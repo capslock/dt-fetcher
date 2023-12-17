@@ -80,19 +80,35 @@ pub struct Perk {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct Override {
+    pub ver: i32,
+    pub rarity: i32,
+    #[serde(rename = "characterLevel")]
+    pub character_level: i32,
+    #[serde(rename = "itemLevel")]
+    pub item_level: i32,
+    #[serde(rename = "baseItemLevel")]
+    pub base_item_level: i32,
+    pub traits: Vec<Trait>,
+    pub perks: Vec<Perk>,
+}
+
+#[skip_serializing_none]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct WeaponOverride {
+    #[serde(flatten)]
+    pub overrides: Override,
+    pub base_stats: Vec<Stat>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(untagged)]
-pub enum Override {
-    Override {
-        ver: i32,
-        rarity: i32,
-        character_level: i32,
-        item_level: i32,
-        base_item_level: i32,
-        traits: Vec<Trait>,
-        perks: Vec<Perk>,
-        base_stats: Vec<Stat>,
-    },
-    None {},
+#[serde(deny_unknown_fields)]
+pub enum Overrides {
+    Weapon(WeaponOverride),
+    Gadget(Override),
+    RandomItem { slots: Vec<String> },
+    None(HashMap<String, serde_json::Value>),
 }
 
 #[skip_serializing_none]
@@ -105,7 +121,7 @@ pub struct Description {
     #[serde(rename = "type")]
     pub description_type: String,
     pub properties: HashMap<String, serde_json::Value>,
-    pub overrides: Override,
+    pub overrides: Overrides,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
