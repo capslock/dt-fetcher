@@ -8,6 +8,7 @@ use std::{
 use anyhow::Result;
 use axum::{
     extract::{Query, State},
+    http::StatusCode,
     routing::get,
     Json, Router,
 };
@@ -37,13 +38,19 @@ struct AppData {
     master_data: RwLock<dt_api::models::MasterData>,
 }
 
+fn time_until(time: u64) -> Duration {
+    let expiration = UNIX_EPOCH + Duration::from_millis(time);
+    expiration
+        .duration_since(SystemTime::now())
+        .unwrap_or_default()
+}
+
 async fn refresh_auth(app_data: Arc<AppData>, mut auth: dt_api::Auth) -> Result<()> {
     loop {
         let duration = if let Some(refresh_at) = auth.refresh_at {
-            let expiration = UNIX_EPOCH + Duration::from_millis(refresh_at);
-            expiration.duration_since(SystemTime::now())?
+            time_until(refresh_at)
         } else {
-            Duration::from_secs(auth.expires_in.into())
+            Duration::from_secs(auth.expires_in.into()).saturating_sub(Duration::from_secs(300))
         };
 
         tokio::time::sleep_until(Instant::now() + duration).await;
@@ -69,12 +76,6 @@ async fn build_app_data(api: dt_api::Api) -> Result<Arc<AppData>> {
         .collect::<Vec<_>>();
 
     let (marks_store, credits_store) = tokio::join!(marks_store, credits_store);
-
-    for (i, s) in marks_store.iter().enumerate() {
-        if let Err(e) = s {
-            println!("Failed to get marks store {i}: {}", e);
-        }
-    }
 
     let marks_store = summary
         .characters
@@ -140,19 +141,108 @@ struct StoreQuery {
     currency_type: dt_api::models::CurrencyType,
 }
 
+async fn refresh_store(
+    character_id: String,
+    state: Arc<AppData>,
+    currency_type: dt_api::models::CurrencyType,
+) -> Result<Json<Store>, StatusCode> {
+    let api = state.api.read().await;
+    let summary = state.summary.read().await;
+    let character = summary.characters.iter().find(|c| c.id == character_id);
+    if let Some(character) = character {
+        let store = api.get_store(currency_type, &character).await;
+        if let Err(e) = store {
+            println!("Failed to get store {}: {}", character_id, e);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        } else {
+            let store = store.unwrap();
+            match currency_type {
+                dt_api::models::CurrencyType::Marks => {
+                    state
+                        .marks_store
+                        .write()
+                        .await
+                        .insert(character_id.clone(), store.clone());
+                }
+                dt_api::models::CurrencyType::Credits => {
+                    state
+                        .credits_store
+                        .write()
+                        .await
+                        .insert(character_id.clone(), store.clone());
+                }
+            }
+            return Ok(Json(store));
+        }
+    } else {
+        println!("Failed to find character {}", character_id);
+        return Err(StatusCode::NOT_FOUND);
+    }
+}
+
 async fn store(
     Query(StoreQuery {
         character_id,
         currency_type,
     }): Query<StoreQuery>,
     State(state): State<Arc<AppData>>,
-) -> Json<Store> {
+) -> Result<Json<Store>, StatusCode> {
     match currency_type {
         dt_api::models::CurrencyType::Marks => {
-            Json(state.marks_store.read().await[&character_id].clone())
+            let marks_store = state.marks_store.read().await;
+            let store = marks_store.get(&character_id);
+            if let Some(store) = store {
+                if store
+                    .current_rotation_end
+                    .parse::<u64>()
+                    .map(time_until)
+                    .unwrap_or_default()
+                    == Duration::from_secs(0)
+                {
+                    return refresh_store(
+                        character_id,
+                        state.clone(),
+                        dt_api::models::CurrencyType::Marks,
+                    )
+                    .await;
+                }
+                return Ok(Json(store.clone()));
+            } else {
+                return refresh_store(
+                    character_id,
+                    state.clone(),
+                    dt_api::models::CurrencyType::Marks,
+                )
+                .await;
+            }
         }
         dt_api::models::CurrencyType::Credits => {
-            Json(state.credits_store.read().await[&character_id].clone())
+            let credits_store = state.credits_store.read().await;
+            let store = credits_store.get(&character_id);
+            if let Some(store) = store {
+                if store
+                    .current_rotation_end
+                    .parse::<u64>()
+                    .map(time_until)
+                    .unwrap_or_default()
+                    == Duration::from_secs(0)
+                {
+                    return refresh_store(
+                        character_id,
+                        state.clone(),
+                        dt_api::models::CurrencyType::Credits,
+                    )
+                    .await;
+                }
+                return Ok(Json(store.clone()));
+            } else {
+                return refresh_store(
+                    character_id,
+                    state.clone(),
+                    dt_api::models::CurrencyType::Credits,
+                )
+                .await;
+            }
         }
     }
 }
