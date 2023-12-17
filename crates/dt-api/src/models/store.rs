@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use serde_with::skip_serializing_none;
+use serde_with::{formats::Strict, serde_as, skip_serializing_none, TimestampMilliSeconds};
 
 use crate::models::Link;
 
@@ -133,6 +134,7 @@ pub struct Offer {
     pub media: Vec<serde_json::Value>,
 }
 
+#[serde_as]
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Store {
@@ -143,5 +145,6 @@ pub struct Store {
     pub public: Vec<Offer>,
     pub personal: Vec<Offer>,
     pub rerolls_this_rotation: i32,
-    pub current_rotation_end: String,
+    #[serde_as(as = "TimestampMilliSeconds<String, Strict>")]
+    pub current_rotation_end: DateTime<Utc>,
 }

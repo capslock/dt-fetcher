@@ -1,9 +1,4 @@
-use std::{
-    collections::HashMap,
-    path::PathBuf,
-    sync::Arc,
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
+use std::{collections::HashMap, path::PathBuf, sync::Arc, time::SystemTime};
 
 use anyhow::Result;
 use axum::{
@@ -12,6 +7,7 @@ use axum::{
     routing::get,
     Json, Router,
 };
+use chrono::{DateTime, Utc};
 use clap::Parser;
 use dt_api::models::{MasterData, Store, Summary};
 use figment::{providers::Format, Figment};
@@ -38,19 +34,12 @@ struct AppData {
     master_data: RwLock<dt_api::models::MasterData>,
 }
 
-fn time_until(time: u64) -> Duration {
-    let expiration = UNIX_EPOCH + Duration::from_millis(time);
-    expiration
-        .duration_since(SystemTime::now())
-        .unwrap_or_default()
-}
-
 async fn refresh_auth(app_data: Arc<AppData>, mut auth: dt_api::Auth) -> Result<()> {
     loop {
         let duration = if let Some(refresh_at) = auth.refresh_at {
-            time_until(refresh_at)
+            (refresh_at - DateTime::from(SystemTime::now())).to_std()?
         } else {
-            Duration::from_secs(auth.expires_in.into()).saturating_sub(Duration::from_secs(300))
+            auth.expires_in
         };
 
         tokio::time::sleep_until(Instant::now() + duration).await;
@@ -187,63 +176,26 @@ async fn store(
     }): Query<StoreQuery>,
     State(state): State<Arc<AppData>>,
 ) -> Result<Json<Store>, StatusCode> {
-    match currency_type {
+    let currency_store = match currency_type {
         dt_api::models::CurrencyType::Marks => {
             let marks_store = state.marks_store.read().await;
-            let store = marks_store.get(&character_id);
-            if let Some(store) = store {
-                if store
-                    .current_rotation_end
-                    .parse::<u64>()
-                    .map(time_until)
-                    .unwrap_or_default()
-                    == Duration::from_secs(0)
-                {
-                    return refresh_store(
-                        character_id,
-                        state.clone(),
-                        dt_api::models::CurrencyType::Marks,
-                    )
-                    .await;
-                }
-                return Ok(Json(store.clone()));
-            } else {
-                return refresh_store(
-                    character_id,
-                    state.clone(),
-                    dt_api::models::CurrencyType::Marks,
-                )
-                .await;
-            }
+            marks_store
         }
         dt_api::models::CurrencyType::Credits => {
             let credits_store = state.credits_store.read().await;
-            let store = credits_store.get(&character_id);
-            if let Some(store) = store {
-                if store
-                    .current_rotation_end
-                    .parse::<u64>()
-                    .map(time_until)
-                    .unwrap_or_default()
-                    == Duration::from_secs(0)
-                {
-                    return refresh_store(
-                        character_id,
-                        state.clone(),
-                        dt_api::models::CurrencyType::Credits,
-                    )
-                    .await;
-                }
-                return Ok(Json(store.clone()));
-            } else {
-                return refresh_store(
-                    character_id,
-                    state.clone(),
-                    dt_api::models::CurrencyType::Credits,
-                )
-                .await;
-            }
+            credits_store
         }
+    };
+    let char_store = currency_store.get(&character_id);
+    if let Some(store) = char_store {
+        if store.current_rotation_end <= DateTime::<Utc>::from(SystemTime::now()) {
+            drop(currency_store);
+            return refresh_store(character_id, state, currency_type).await;
+        }
+        return Ok(Json(store.clone()));
+    } else {
+        drop(currency_store);
+        return refresh_store(character_id, state, currency_type).await;
     }
 }
 

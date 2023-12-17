@@ -1,18 +1,26 @@
+use std::time::Duration;
+
 use anyhow::{anyhow, Result};
+use chrono::{DateTime, Utc};
 use models::{Character, CurrencyType};
 use serde::{Deserialize, Serialize};
-use serde_with::skip_serializing_none;
+use serde_with::{
+    formats::Strict, serde_as, skip_serializing_none, DurationSeconds, TimestampMilliSeconds,
+};
 
 pub mod models;
 
 #[skip_serializing_none]
+#[serde_as]
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct Auth {
     pub access_token: String,
     pub account_name: String,
-    pub expires_in: u32,
-    pub refresh_at: Option<u64>,
+    #[serde_as(as = "DurationSeconds<u64>")]
+    pub expires_in: Duration,
+    #[serde_as(as = "Option<TimestampMilliSeconds<i64, Strict>>")]
+    pub refresh_at: Option<DateTime<Utc>>,
     pub refresh_token: String,
     pub sub: String,
 }
