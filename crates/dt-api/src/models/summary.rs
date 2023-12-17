@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::models::Link;
 
@@ -13,7 +14,7 @@ pub enum Gender {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Character {
-    pub id: String,
+    pub id: Uuid,
     pub name: String,
     pub gender: Gender,
     pub archetype: String,

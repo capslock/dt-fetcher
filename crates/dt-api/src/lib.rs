@@ -67,7 +67,7 @@ impl Api {
             .await?;
         if res.status().is_success() {
             let account_data = res.json::<models::Summary>().await?;
-            info!(sub = ?self.auth.sub, "Got summary");
+            info!("Got summary");
             debug!(summary = ?account_data);
             Ok(account_data)
         } else {
@@ -77,7 +77,6 @@ impl Api {
                 .await
                 .unwrap_or("No error details".into());
             tracing::error!(
-                sub = ?self.auth.sub,
                 status = ?status,
                 error = ?error,
                 "Failed to get summary"
@@ -107,18 +106,13 @@ impl Api {
             .query(&[
                 ("accountId", self.auth.sub.clone()),
                 ("personal", "true".to_string()),
-                ("characterId", character.id.clone()),
+                ("characterId", character.id.to_string()),
             ])
             .send()
             .await?;
         if res.status().is_success() {
             let store = res.json::<models::Store>().await?;
-            info!(sub = ?self.auth.sub, 
-                currency_type = ?currency_type,
-                character.archetype = ?character.archetype,
-                character.id = ?character.id,
-                character.name = ?character.name,
-                 "Got store");
+            info!("Got store");
             debug!(store = ?store);
             Ok(store)
         } else {
@@ -128,12 +122,8 @@ impl Api {
                 .await
                 .unwrap_or("No error details".into());
             tracing::error!(
-                sub = ?self.auth.sub,
                 status = ?status,
                 error = ?error,
-                currency_type = ?currency_type,
-                character.archetype = ?character.archetype,
-                character.id = ?character.id,
                 "Failed to get store"
             );
             return Err(anyhow!(
@@ -156,7 +146,7 @@ impl Api {
             .await?;
         if res.status().is_success() {
             let master_data = res.json::<models::MasterData>().await?;
-            info!(sub = ?self.auth.sub, "Got master data");
+            info!("Got master data");
             debug!(master_data = ?master_data);
             Ok(master_data)
         } else {
@@ -166,7 +156,6 @@ impl Api {
                 .await
                 .unwrap_or("No error details".into());
             tracing::error!(
-                sub = ?self.auth.sub,
                 status = ?status,
                 error = ?error,
                 "Failed to get master data"
@@ -187,7 +176,7 @@ impl Api {
             .await?;
         if res.status().is_success() {
             let auth = res.json::<Auth>().await?;
-            info!(sub = ?self.auth.sub, "Refreshed auth");
+            info!("Refreshed auth");
             debug!(auth = ?auth);
             self.auth = auth.clone();
             Ok(auth)
@@ -198,7 +187,6 @@ impl Api {
                 .await
                 .unwrap_or("No error details".into());
             tracing::error!(
-                sub = ?self.auth.sub,
                 status = ?status,
                 error = ?error,
                 "Failed to refresh auth"

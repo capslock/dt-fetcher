@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_with::{formats::Strict, serde_as, skip_serializing_none, TimestampMilliSeconds};
+use uuid::Uuid;
 
 use crate::models::Link;
 
@@ -25,7 +26,7 @@ impl std::fmt::Display for CurrencyType {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Catalog {
-    pub id: String,
+    pub id: Uuid,
     pub name: String,
     pub generation: i32,
     pub layout_ref: Option<String>,
@@ -44,7 +45,7 @@ pub struct Amount {
 #[serde(rename_all = "camelCase")]
 pub struct Price {
     pub amount: Amount,
-    pub id: String,
+    pub id: Uuid,
     pub priority: i32,
     pub price_formula: Option<String>,
 }
@@ -52,7 +53,7 @@ pub struct Price {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Entitlement {
-    pub id: String,
+    pub id: Uuid,
     pub limit: i32,
     #[serde(rename = "type")]
     pub entitlement_type: String,
@@ -108,7 +109,7 @@ pub enum Overrides {
     Weapon(WeaponOverride),
     Gadget(Override),
     RandomItem { slots: Vec<String> },
-    None(HashMap<String, serde_json::Value>),
+    None {},
 }
 
 #[skip_serializing_none]
@@ -116,7 +117,7 @@ pub enum Overrides {
 #[serde(rename_all = "camelCase")]
 pub struct Description {
     pub id: String,
-    pub gear_id: String,
+    pub gear_id: Uuid,
     pub rotation: String,
     #[serde(rename = "type")]
     pub description_type: String,
@@ -127,7 +128,7 @@ pub struct Description {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Sku {
-    pub id: String,
+    pub id: Uuid,
     pub display_priority: i32,
     pub internal_name: String,
     pub name: String,
@@ -141,7 +142,7 @@ pub struct Sku {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Offer {
-    pub offer_id: String,
+    pub offer_id: Uuid,
     pub sku: Sku,
     pub entitlement: Entitlement,
     pub price: Price,

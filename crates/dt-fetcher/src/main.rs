@@ -20,9 +20,10 @@ use figment::{providers::Format, Figment};
 use futures::stream::{FuturesOrdered, StreamExt};
 use tokio::sync::RwLock;
 use tower_http::trace::TraceLayer;
-use tracing::{error, metadata::LevelFilter, Span};
+use tracing::{debug, error, metadata::LevelFilter, Span};
 use tracing::{info, instrument};
 use tracing_subscriber::{prelude::*, EnvFilter};
+use uuid::Uuid;
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -40,12 +41,12 @@ struct Args {
 struct AppData {
     api: RwLock<dt_api::Api>,
     summary: RwLock<dt_api::models::Summary>,
-    marks_store: RwLock<HashMap<String, dt_api::models::Store>>,
-    credits_store: RwLock<HashMap<String, dt_api::models::Store>>,
+    marks_store: RwLock<HashMap<Uuid, dt_api::models::Store>>,
+    credits_store: RwLock<HashMap<Uuid, dt_api::models::Store>>,
     master_data: RwLock<dt_api::models::MasterData>,
 }
 
-#[instrument]
+#[instrument(skip(app_data))]
 async fn refresh_auth(app_data: Arc<AppData>, mut auth: dt_api::Auth) -> Result<()> {
     loop {
         let duration = if let Some(refresh_at) = auth.refresh_at {
@@ -100,7 +101,7 @@ async fn build_app_data(api: dt_api::Api) -> Result<Arc<AppData>> {
                 None
             }
         })
-        .collect::<HashMap<String, Store>>();
+        .collect::<HashMap<Uuid, Store>>();
 
     let credits_store = summary
         .characters
@@ -113,7 +114,7 @@ async fn build_app_data(api: dt_api::Api) -> Result<Arc<AppData>> {
                 None
             }
         })
-        .collect::<HashMap<String, Store>>();
+        .collect::<HashMap<Uuid, Store>>();
 
     let master_data = api.get_master_data().await?;
 
@@ -169,7 +170,7 @@ async fn main() -> Result<()> {
     let app_data = build_app_data(api).await?;
     let refresh_app_data = app_data.clone();
 
-    tokio::spawn(async move { refresh_auth(refresh_app_data, auth) });
+    tokio::spawn(refresh_auth(refresh_app_data, auth));
 
     let app = Router::new()
         .route("/store", get(store))
@@ -203,13 +204,13 @@ async fn summary(State(state): State<Arc<AppData>>) -> Json<Summary> {
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct StoreQuery {
-    character_id: String,
+    character_id: Uuid,
     currency_type: dt_api::models::CurrencyType,
 }
 
 #[instrument(skip(state))]
 async fn refresh_store(
-    character_id: String,
+    character_id: Uuid,
     state: Arc<AppData>,
     currency_type: dt_api::models::CurrencyType,
 ) -> Result<Json<Store>, StatusCode> {
@@ -234,14 +235,14 @@ async fn refresh_store(
                             .marks_store
                             .write()
                             .await
-                            .insert(character_id.clone(), store.clone());
+                            .insert(character_id, store.clone());
                     }
                     dt_api::models::CurrencyType::Credits => {
                         state
                             .credits_store
                             .write()
                             .await
-                            .insert(character_id.clone(), store.clone());
+                            .insert(character_id, store.clone());
                     }
                 }
                 info!("Successfully fetched store");
@@ -279,6 +280,7 @@ async fn store(
             info!("Store is out of date, refreshing");
             return refresh_store(character_id, state, currency_type).await;
         }
+        debug!("Store valid until {:?}", store.current_rotation_end);
         info!("Returning cached store");
         return Ok(Json(store.clone()));
     } else {
