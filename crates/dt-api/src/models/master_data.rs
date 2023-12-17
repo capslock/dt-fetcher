@@ -4,13 +4,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::models::Link;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct PlayerItems {
     pub href: String,
     pub version: String,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MasterData {
     #[serde(rename = "_links")]

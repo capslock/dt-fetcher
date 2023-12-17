@@ -9,7 +9,7 @@ pub use store::*;
 mod master_data;
 pub use master_data::*;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Link {
     pub href: String,
 }

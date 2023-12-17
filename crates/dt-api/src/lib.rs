@@ -1,14 +1,18 @@
+use anyhow::{anyhow, Result};
 use models::{Character, CurrencyType};
 use serde::{Deserialize, Serialize};
+use serde_with::skip_serializing_none;
 
 pub mod models;
 
+#[skip_serializing_none]
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct Auth {
     pub access_token: String,
     pub account_name: String,
     pub expires_in: u32,
-    pub refresh_at: u32,
+    pub refresh_at: Option<u64>,
     pub refresh_token: String,
     pub sub: String,
 }
@@ -24,7 +28,7 @@ impl Api {
         Self { client, auth }
     }
 
-    pub async fn get_summary(&self) -> Result<models::Summary, reqwest::Error> {
+    pub async fn get_summary(&self) -> Result<models::Summary> {
         let url = format!(
             "https://bsp-td-prod.atoma.cloud/web/{}/summary",
             self.auth.sub
@@ -35,17 +39,26 @@ impl Api {
             .bearer_auth(&self.auth.access_token)
             .send()
             .await?;
-        let account_data = res.json::<models::Summary>().await?;
-        Ok(account_data)
+        if res.status().is_success() {
+            let account_data = res.json::<models::Summary>().await?;
+            Ok(account_data)
+        } else {
+            let error = res.json::<serde_json::Value>().await?;
+            Err(anyhow!(
+                "Failed to get summary {}: {}",
+                self.auth.sub,
+                error
+            ))
+        }
     }
 
     pub async fn get_store(
         &self,
         currency_type: CurrencyType,
-        character: Character,
-    ) -> Result<models::Store, reqwest::Error> {
+        character: &Character,
+    ) -> Result<models::Store> {
         let url = format!(
-            "https://bsp-td-prod.atoma.cloud/store/storefront/{}_store_{}/store",
+            "https://bsp-td-prod.atoma.cloud/store/storefront/{}_store_{}",
             currency_type, character.archetype
         );
         let res = self
@@ -55,30 +68,42 @@ impl Api {
             .query(&[
                 ("accountId", self.auth.sub.clone()),
                 ("personal", "true".to_string()),
-                ("characterId", character.id),
+                ("characterId", character.id.clone()),
             ])
             .send()
             .await?;
-        let store = res.json::<models::Store>().await?;
-        Ok(store)
+        if res.status().is_success() {
+            let store = res.json::<models::Store>().await?;
+            Ok(store)
+        } else {
+            let error = res.json::<serde_json::Value>().await?;
+            return Err(anyhow!(
+                "Failed to get store {} {}: {}",
+                currency_type,
+                character.archetype,
+                error
+            ));
+        }
     }
 
-    pub async fn get_master_data(&self) -> Result<models::MasterData, reqwest::Error> {
-        let url = format!(
-            "https://bsp-td-prod.atoma.cloud/web/{}/masterdata",
-            self.auth.sub
-        );
+    pub async fn get_master_data(&self) -> Result<models::MasterData> {
+        let url = format!("https://bsp-td-prod.atoma.cloud/master-data/meta/items",);
         let res = self
             .client
             .get(&url)
             .bearer_auth(&self.auth.access_token)
             .send()
             .await?;
-        let master_data = res.json::<models::MasterData>().await?;
-        Ok(master_data)
+        if res.status().is_success() {
+            let master_data = res.json::<models::MasterData>().await?;
+            Ok(master_data)
+        } else {
+            let error = res.json::<serde_json::Value>().await?;
+            Err(anyhow!("Failed to get master data: {}", error))
+        }
     }
 
-    pub async fn refresh_auth(&mut self) -> Result<Auth, reqwest::Error> {
+    pub async fn refresh_auth(&mut self) -> Result<Auth> {
         let url = "https://bsp-auth-prod.atoma.cloud/queue/refresh";
         let res = self
             .client
@@ -86,8 +111,13 @@ impl Api {
             .bearer_auth(&self.auth.refresh_token)
             .send()
             .await?;
-        let auth = res.json::<Auth>().await?;
-        self.auth = auth.clone();
-        Ok(auth)
+        if res.status().is_success() {
+            let auth = res.json::<Auth>().await?;
+            self.auth = auth.clone();
+            Ok(auth)
+        } else {
+            let error = res.json::<serde_json::Value>().await?;
+            Err(anyhow!("Failed to refresh auth: {}", error))
+        }
     }
 }
