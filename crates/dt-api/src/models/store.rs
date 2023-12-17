@@ -6,7 +6,7 @@ use serde_with::{formats::Strict, serde_as, skip_serializing_none, TimestampMill
 
 use crate::models::Link;
 
-#[derive(Copy, Clone, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CurrencyType {
     Marks,
@@ -22,7 +22,7 @@ impl std::fmt::Display for CurrencyType {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Catalog {
     pub id: String,
@@ -33,14 +33,14 @@ pub struct Catalog {
     pub valid_to: String,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Amount {
     pub amount: i32,
     #[serde(rename = "type")]
     pub amount_type: CurrencyType,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Price {
     pub amount: Amount,
@@ -49,7 +49,7 @@ pub struct Price {
     pub price_formula: Option<String>,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Entitlement {
     pub id: String,
@@ -58,27 +58,27 @@ pub struct Entitlement {
     pub entitlement_type: String,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Stat {
     pub name: String,
     pub value: f64,
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Trait {
     pub id: String,
     pub rarity: i32,
     pub value: Option<f64>,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Perk {
     pub id: String,
     pub rarity: i32,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(untagged)]
 pub enum Override {
@@ -96,7 +96,7 @@ pub enum Override {
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Description {
     pub id: String,
@@ -108,7 +108,7 @@ pub struct Description {
     pub overrides: Override,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Sku {
     pub id: String,
@@ -122,7 +122,7 @@ pub struct Sku {
     pub dlc_req: Vec<String>,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Offer {
     pub offer_id: String,
@@ -135,7 +135,7 @@ pub struct Offer {
 }
 
 #[serde_as]
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Store {
     #[serde(rename = "_links")]

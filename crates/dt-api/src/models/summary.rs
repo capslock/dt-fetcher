@@ -4,14 +4,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::models::Link;
 
-#[derive(Copy, Clone, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Gender {
     Female,
     Male,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Character {
     pub id: String,
     pub name: String,
@@ -21,18 +21,18 @@ pub struct Character {
     pub level: u32,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Email {
     pub verified: bool,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LinkedAccounts {
     pub steam: String,
     pub twitch: String,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MarketingPreferences {
     pub newsletter_subscribe: bool,
@@ -40,7 +40,7 @@ pub struct MarketingPreferences {
     pub terms_agreed: bool,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Summary {
     #[serde(rename = "_links")]

@@ -7,12 +7,13 @@ use serde::{Deserialize, Serialize};
 use serde_with::{
     formats::Strict, serde_as, skip_serializing_none, DurationSeconds, TimestampMilliSeconds,
 };
+use tracing::{debug, info, instrument};
 
 pub mod models;
 
 #[skip_serializing_none]
 #[serde_as]
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct Auth {
     pub access_token: String,
@@ -25,22 +26,39 @@ pub struct Auth {
     pub sub: String,
 }
 
+impl std::fmt::Debug for Auth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Auth")
+            .field("access_token", &"<REDACTED>")
+            .field("account_name", &self.account_name)
+            .field("expires_in", &self.expires_in)
+            .field("refresh_at", &self.refresh_at)
+            .field("refresh_token", &"<REDACTED>")
+            .field("sub", &self.sub)
+            .finish()
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct Api {
     client: reqwest::Client,
     auth: Auth,
 }
 
 impl Api {
+    #[instrument]
     pub fn new(auth: Auth) -> Self {
         let client = reqwest::Client::new();
         Self { client, auth }
     }
 
+    #[instrument(skip(self), fields(self.auth = ?self.auth))]
     pub async fn get_summary(&self) -> Result<models::Summary> {
         let url = format!(
             "https://bsp-td-prod.atoma.cloud/web/{}/summary",
             self.auth.sub
         );
+        debug!(url = ?url, "Getting summary");
         let res = self
             .client
             .get(&url)
@@ -49,20 +67,29 @@ impl Api {
             .await?;
         if res.status().is_success() {
             let account_data = res.json::<models::Summary>().await?;
+            info!(sub = ?self.auth.sub, "Got summary");
+            debug!(summary = ?account_data);
             Ok(account_data)
         } else {
             let status = res.status();
-            if let Ok(error) = res.json::<serde_json::Value>().await {
-                return Err(anyhow!(
-                    "Failed to get summary {}: {status}: {error}",
-                    self.auth.sub,
-                ));
-            } else {
-                return Err(anyhow!("Failed to get summary {}: {status}", self.auth.sub));
-            }
+            let error = res
+                .json::<serde_json::Value>()
+                .await
+                .unwrap_or("No error details".into());
+            tracing::error!(
+                sub = ?self.auth.sub,
+                status = ?status,
+                error = ?error,
+                "Failed to get summary"
+            );
+            return Err(anyhow!(
+                "Failed to get summary {}: {status}: {error}",
+                self.auth.sub
+            ));
         }
     }
 
+    #[instrument(skip(self), fields(self.auth = ?self.auth))]
     pub async fn get_store(
         &self,
         currency_type: CurrencyType,
@@ -72,6 +99,7 @@ impl Api {
             "https://bsp-td-prod.atoma.cloud/store/storefront/{}_store_{}",
             currency_type, character.archetype
         );
+        debug!(url = ?url, "Getting store");
         let res = self
             .client
             .get(&url)
@@ -85,27 +113,35 @@ impl Api {
             .await?;
         if res.status().is_success() {
             let store = res.json::<models::Store>().await?;
+            info!(sub = ?self.auth.sub, "Got store");
+            debug!(store = ?store);
             Ok(store)
         } else {
             let status = res.status();
-            if let Ok(error) = res.json::<serde_json::Value>().await {
-                return Err(anyhow!(
-                    "Failed to get store {} {}: {status}: {error}",
-                    currency_type,
-                    character.archetype
-                ));
-            } else {
-                return Err(anyhow!(
-                    "Failed to get store {} {}: {status}",
-                    currency_type,
-                    character.archetype
-                ));
-            }
+            let error = res
+                .json::<serde_json::Value>()
+                .await
+                .unwrap_or("No error details".into());
+            tracing::error!(
+                sub = ?self.auth.sub,
+                status = ?status,
+                error = ?error,
+                currency_type = ?currency_type,
+                character_archetype = ?character.archetype,
+                "Failed to get store"
+            );
+            return Err(anyhow!(
+                "Failed to get store {} {}: {status}: {error}",
+                currency_type,
+                character.archetype
+            ));
         }
     }
 
+    #[instrument(skip(self), fields(self.auth = ?self.auth))]
     pub async fn get_master_data(&self) -> Result<models::MasterData> {
-        let url = format!("https://bsp-td-prod.atoma.cloud/master-data/meta/items",);
+        let url = format!("https://bsp-td-prod.atoma.cloud/master-data/meta/items");
+        debug!(url = ?url, "Getting master data");
         let res = self
             .client
             .get(&url)
@@ -114,19 +150,29 @@ impl Api {
             .await?;
         if res.status().is_success() {
             let master_data = res.json::<models::MasterData>().await?;
+            info!(sub = ?self.auth.sub, "Got master data");
+            debug!(master_data = ?master_data);
             Ok(master_data)
         } else {
             let status = res.status();
-            if let Ok(error) = res.json::<serde_json::Value>().await {
-                Err(anyhow!("Failed to get master data: {status}: {error}"))
-            } else {
-                Err(anyhow!("Failed to get master data: {status}"))
-            }
+            let error = res
+                .json::<serde_json::Value>()
+                .await
+                .unwrap_or("No error details".into());
+            tracing::error!(
+                sub = ?self.auth.sub,
+                status = ?status,
+                error = ?error,
+                "Failed to get master data"
+            );
+            Err(anyhow!("Failed to get master data: {status}: {error}"))
         }
     }
 
+    #[instrument(skip(self), fields(self.auth = ?self.auth))]
     pub async fn refresh_auth(&mut self) -> Result<Auth> {
         let url = "https://bsp-auth-prod.atoma.cloud/queue/refresh";
+        debug!(url = ?url, "Refreshing auth");
         let res = self
             .client
             .get(url)
@@ -135,10 +181,23 @@ impl Api {
             .await?;
         if res.status().is_success() {
             let auth = res.json::<Auth>().await?;
+            info!(sub = ?self.auth.sub, "Refreshed auth");
+            debug!(auth = ?auth);
             self.auth = auth.clone();
             Ok(auth)
         } else {
-            Err(anyhow!("Failed to refresh auth: {}", res.status()))
+            let status = res.status();
+            let error = res
+                .json::<serde_json::Value>()
+                .await
+                .unwrap_or("No error details".into());
+            tracing::error!(
+                sub = ?self.auth.sub,
+                status = ?status,
+                error = ?error,
+                "Failed to refresh auth"
+            );
+            Err(anyhow!("Failed to refresh auth: {status}: {error}"))
         }
     }
 }
