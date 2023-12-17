@@ -113,7 +113,12 @@ impl Api {
             .await?;
         if res.status().is_success() {
             let store = res.json::<models::Store>().await?;
-            info!(sub = ?self.auth.sub, "Got store");
+            info!(sub = ?self.auth.sub, 
+                currency_type = ?currency_type,
+                character.archetype = ?character.archetype,
+                character.id = ?character.id,
+                character.name = ?character.name,
+                 "Got store");
             debug!(store = ?store);
             Ok(store)
         } else {
@@ -127,7 +132,8 @@ impl Api {
                 status = ?status,
                 error = ?error,
                 currency_type = ?currency_type,
-                character_archetype = ?character.archetype,
+                character.archetype = ?character.archetype,
+                character.id = ?character.id,
                 "Failed to get store"
             );
             return Err(anyhow!(
