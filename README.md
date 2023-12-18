@@ -17,3 +17,24 @@ Options:
       --listen-addr <LISTEN_ADDR>  Host and port to listen on [default: 0.0.0.0:3000]
   -h, --help                       Print help
 ```
+
+## API
+
+### `GET /store`
+
+Get store contents for the specified character and currency type.
+
+#### Parameters
+
+| Parameter      | Description          |
+| -------------- | -------------------- |
+| `characterId`  | `uuid` of character  |
+| `currencyType` | `credits` or `marks` |
+
+### `GET /summary`
+
+Get account summary.
+
+### `GET /master_data`
+
+Get master data info.
