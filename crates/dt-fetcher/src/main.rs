@@ -1,11 +1,13 @@
 use std::{
     collections::HashMap,
+    future::IntoFuture,
+    net::SocketAddr,
     path::PathBuf,
     sync::Arc,
     time::{Duration, SystemTime},
 };
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use axum::{
     body::Body,
     extract::{Query, State},
@@ -29,12 +31,18 @@ use uuid::Uuid;
 struct Args {
     /// Path to auth json file
     #[arg(
-        short,
         long,
         value_parser = clap::value_parser!(PathBuf),
         default_value = "auth.json"
     )]
     auth: PathBuf,
+    /// Host and port to listen on
+    #[arg(
+        long,
+        value_parser = clap::value_parser!(SocketAddr),
+        default_value = "0.0.0.0:3000"
+    )]
+    listen_addr: SocketAddr,
 }
 
 #[derive(Debug)]
@@ -46,7 +54,7 @@ struct AppData {
     master_data: RwLock<dt_api::models::MasterData>,
 }
 
-#[instrument(skip(app_data))]
+#[instrument(skip_all)]
 async fn refresh_auth(app_data: Arc<AppData>, mut auth: dt_api::Auth) -> Result<()> {
     loop {
         let duration = if let Some(refresh_at) = auth.refresh_at {
@@ -62,17 +70,25 @@ async fn refresh_auth(app_data: Arc<AppData>, mut auth: dt_api::Auth) -> Result<
             tokio::time::sleep(duration).await;
         }
         info!("Refreshing auth");
-        auth = app_data.api.write().await.refresh_auth().await?;
-        info!(
-            "Auth refreshed, next refresh in {:?}",
-            auth.expires_in.checked_sub(Duration::from_secs(300))
-        );
+        auth = app_data
+            .api
+            .write()
+            .await
+            .refresh_auth()
+            .await
+            .context("failed to refresh auth")?;
+        info!(auth = ?auth, "Auth refreshed");
     }
 }
 
 #[instrument]
 async fn build_app_data(api: dt_api::Api) -> Result<Arc<AppData>> {
     let summary = api.get_summary().await?;
+
+    info!(
+        "Fetching stores for {} characters",
+        summary.characters.len()
+    );
 
     let marks_store = summary
         .characters
@@ -97,7 +113,7 @@ async fn build_app_data(api: dt_api::Api) -> Result<Arc<AppData>> {
         .filter_map(|(c, s)| match s {
             Ok(s) => Some((c.id.clone(), s)),
             Err(e) => {
-                error!(character = ?c, "Failed to get marks store: {}", e);
+                error!("Failed to get marks store: {}", e);
                 None
             }
         })
@@ -110,7 +126,7 @@ async fn build_app_data(api: dt_api::Api) -> Result<Arc<AppData>> {
         .filter_map(|(c, s)| match s {
             Ok(s) => Some((c.id.clone(), s)),
             Err(e) => {
-                error!(character = ?c, "Failed to get credits store: {}", e);
+                error!("Failed to get credits store: {}", e);
                 None
             }
         })
@@ -159,18 +175,24 @@ fn init_logging() -> Result<()> {
 async fn main() -> Result<()> {
     init_logging().context("Failed to initialize logging")?;
 
+    let args = Args::parse();
+
     let auth: dt_api::Auth = Figment::new()
-        .merge(figment::providers::Json::file(Args::parse().auth))
+        .merge(figment::providers::Json::file(args.auth))
         .extract()?;
 
     let mut api = dt_api::Api::new(auth);
 
+    info!("Refreshing auth");
+
     let auth = api.refresh_auth().await?;
+
+    info!("Fetching data");
 
     let app_data = build_app_data(api).await?;
     let refresh_app_data = app_data.clone();
 
-    tokio::spawn(refresh_auth(refresh_app_data, auth));
+    let refresh_auth_task = tokio::spawn(refresh_auth(refresh_app_data, auth));
 
     let app = Router::new()
         .route("/store", get(store))
@@ -188,11 +210,22 @@ async fn main() -> Result<()> {
             })
         );
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await?;
+    info!("Starting server");
 
-    axum::serve(listener, app).await?;
+    let listener = tokio::net::TcpListener::bind(args.listen_addr).await?;
 
-    Ok(())
+    let serve_task = tokio::spawn(axum::serve(listener, app).into_future());
+
+    info!("Listening on {}", args.listen_addr);
+
+    match tokio::try_join!(refresh_auth_task, serve_task) {
+        Ok((auth_res, serve_res)) => {
+            auth_res?;
+            serve_res?;
+            Ok(())
+        }
+        Err(e) => Err(anyhow!("task failed: {e}")),
+    }
 }
 
 #[instrument(skip(state))]
