@@ -297,29 +297,24 @@ async fn store(
     State(state): State<Arc<AppData>>,
 ) -> Result<Json<Store>, StatusCode> {
     let currency_store = match currency_type {
-        dt_api::models::CurrencyType::Marks => {
-            let marks_store = state.marks_store.read().await;
-            marks_store
-        }
-        dt_api::models::CurrencyType::Credits => {
-            let credits_store = state.credits_store.read().await;
-            credits_store
-        }
+        dt_api::models::CurrencyType::Marks => state.marks_store.read().await,
+        dt_api::models::CurrencyType::Credits => state.credits_store.read().await,
     };
     let char_store = currency_store.get(&character_id);
     if let Some(store) = char_store {
         if store.current_rotation_end <= DateTime::<Utc>::from(SystemTime::now()) {
             drop(currency_store);
             info!("Store is out of date, refreshing");
-            return refresh_store(character_id, state, currency_type).await;
+            refresh_store(character_id, state, currency_type).await
+        } else {
+            debug!("Store valid until {:?}", store.current_rotation_end);
+            info!("Returning cached store");
+            Ok(Json(store.clone()))
         }
-        debug!("Store valid until {:?}", store.current_rotation_end);
-        info!("Returning cached store");
-        return Ok(Json(store.clone()));
     } else {
         drop(currency_store);
         info!("Trying to fetch store");
-        return refresh_store(character_id, state, currency_type).await;
+        refresh_store(character_id, state, currency_type).await
     }
 }
 
