@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 use crate::models::Link;
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
+#[derive(PartialEq, Eq, Copy, Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CurrencyType {
     Marks,
