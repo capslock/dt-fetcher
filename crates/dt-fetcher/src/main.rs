@@ -12,7 +12,7 @@ use axum::{
     body::Body,
     extract::{Path, Query, State},
     http::{Request, Response, StatusCode},
-    routing::get,
+    routing::{get, put},
     Json, Router,
 };
 use chrono::{DateTime, Utc};
@@ -57,7 +57,7 @@ struct AccountData {
 #[derive(Debug)]
 struct AppData {
     api: RwLock<dt_api::Api>,
-    account_data: HashMap<Uuid, AccountData>,
+    account_data: RwLock<HashMap<Uuid, AccountData>>,
 }
 
 #[derive(PartialEq, Eq)]
@@ -82,6 +82,8 @@ impl Ord for RefreshAuth {
 async fn refresh_auth(app_data: Arc<AppData>) -> Result<()> {
     let auths = app_data
         .account_data
+        .read()
+        .await
         .iter()
         .map(|(id, v)| async {
             RefreshAuth {
@@ -106,7 +108,8 @@ async fn refresh_auth(app_data: Arc<AppData>) -> Result<()> {
         }
         if let Some(mut refresh_auth) = auths.peek_mut() {
             info!(sub = ?refresh_auth.id, "Refreshing auth");
-            let mut auth = app_data.account_data[&refresh_auth.id].auth.write().await;
+            let account_data = app_data.account_data.read().await;
+            let mut auth = account_data[&refresh_auth.id].auth.write().await;
             *auth = app_data
                 .api
                 .read()
@@ -124,7 +127,7 @@ async fn refresh_auth(app_data: Arc<AppData>) -> Result<()> {
 }
 
 #[instrument]
-async fn build_app_data(api: dt_api::Api, auth: &dt_api::Auth) -> Result<Arc<AppData>> {
+async fn build_account_data(api: &dt_api::Api, auth: &dt_api::Auth) -> Result<AccountData> {
     let summary = api.get_summary(auth).await?;
 
     info!(
@@ -176,18 +179,23 @@ async fn build_app_data(api: dt_api::Api, auth: &dt_api::Auth) -> Result<Arc<App
 
     let master_data = api.get_master_data(auth).await?;
 
+    Ok(AccountData {
+        auth: RwLock::new(auth.clone()),
+        summary: RwLock::new(summary),
+        marks_store: RwLock::new(marks_store),
+        credits_store: RwLock::new(credits_store),
+        master_data: RwLock::new(master_data),
+    })
+}
+
+#[instrument]
+async fn build_app_data(api: dt_api::Api, auth: &dt_api::Auth) -> Result<Arc<AppData>> {
     Ok(Arc::new(AppData {
-        api: RwLock::new(api),
-        account_data: HashMap::from([(
+        account_data: RwLock::new(HashMap::from([(
             auth.sub.clone(),
-            AccountData {
-                auth: RwLock::new(auth.clone()),
-                summary: RwLock::new(summary),
-                marks_store: RwLock::new(marks_store),
-                credits_store: RwLock::new(credits_store),
-                master_data: RwLock::new(master_data),
-            },
-        )]),
+            build_account_data(&api, auth).await?,
+        )])),
+        api: RwLock::new(api),
     }))
 }
 
@@ -249,6 +257,7 @@ async fn main() -> Result<()> {
         .route("/store/:id", get(store))
         .route("/summary/:id", get(summary))
         .route("/master_data/:id", get(master_data))
+        .route("/auth/:id", put(put_auth))
         .with_state(app_data)
         .layer(
             TraceLayer::new_for_http()
@@ -284,7 +293,7 @@ async fn summary(
     Path(id): Path<Uuid>,
     State(state): State<Arc<AppData>>,
 ) -> Result<Json<Summary>, StatusCode> {
-    if let Some(account_data) = state.account_data.get(&id) {
+    if let Some(account_data) = state.account_data.read().await.get(&id) {
         info!("Returning cached summary");
         Ok(Json(account_data.summary.read().await.clone()))
     } else {
@@ -295,7 +304,7 @@ async fn summary(
 
 #[instrument(skip(state))]
 async fn summary_single(State(state): State<Arc<AppData>>) -> Result<Json<Summary>, StatusCode> {
-    if let Some(account_id) = state.account_data.keys().next() {
+    if let Some(account_id) = state.account_data.read().await.keys().next() {
         summary(Path(*account_id), State(state.clone())).await
     } else {
         error!("Failed to find account data");
@@ -318,12 +327,16 @@ async fn refresh_store(
     currency_type: dt_api::models::CurrencyType,
 ) -> Result<Json<Store>, StatusCode> {
     let api = state.api.read().await;
-    let summary = state.account_data[account_id].summary.read().await;
+    let account_data = state.account_data.read().await;
+    let summary = account_data[account_id].summary.read().await;
     let character = summary.characters.iter().find(|c| c.id == character_id);
     if let Some(character) = character {
         let store = api
             .get_store(
-                &*state.account_data[account_id].auth.read().await,
+                &*state.account_data.read().await[account_id]
+                    .auth
+                    .read()
+                    .await,
                 currency_type,
                 &character,
             )
@@ -340,14 +353,14 @@ async fn refresh_store(
             Ok(store) => {
                 match currency_type {
                     dt_api::models::CurrencyType::Marks => {
-                        state.account_data[account_id]
+                        account_data[account_id]
                             .marks_store
                             .write()
                             .await
                             .insert(character_id, store.clone());
                     }
                     dt_api::models::CurrencyType::Credits => {
-                        state.account_data[account_id]
+                        account_data[account_id]
                             .credits_store
                             .write()
                             .await
@@ -373,7 +386,7 @@ async fn store(
     }): Query<StoreQuery>,
     State(state): State<Arc<AppData>>,
 ) -> Result<Json<Store>, StatusCode> {
-    if let Some(account_data) = state.account_data.get(&id) {
+    if let Some(account_data) = state.account_data.read().await.get(&id) {
         let currency_store = match currency_type {
             dt_api::models::CurrencyType::Marks => account_data.marks_store.read().await,
             dt_api::models::CurrencyType::Credits => account_data.credits_store.read().await,
@@ -405,7 +418,7 @@ async fn store_single(
     query: Query<StoreQuery>,
     State(state): State<Arc<AppData>>,
 ) -> Result<Json<Store>, StatusCode> {
-    if let Some(account_id) = state.account_data.keys().next() {
+    if let Some(account_id) = state.account_data.read().await.keys().next() {
         store(Path(*account_id), query, State(state.clone())).await
     } else {
         error!("Failed to find account data");
@@ -418,7 +431,7 @@ async fn master_data(
     Path(id): Path<Uuid>,
     State(state): State<Arc<AppData>>,
 ) -> Result<Json<MasterData>, StatusCode> {
-    if let Some(account_data) = state.account_data.get(&id) {
+    if let Some(account_data) = state.account_data.read().await.get(&id) {
         info!("Returning cached master data");
         Ok(Json(account_data.master_data.read().await.clone()))
     } else {
@@ -431,10 +444,36 @@ async fn master_data(
 async fn master_data_single(
     State(state): State<Arc<AppData>>,
 ) -> Result<Json<MasterData>, StatusCode> {
-    if let Some(account_id) = state.account_data.keys().next() {
+    if let Some(account_id) = state.account_data.read().await.keys().next() {
         master_data(Path(*account_id), State(state.clone())).await
     } else {
         error!("Failed to find account data");
         Err(StatusCode::NOT_FOUND)
+    }
+}
+
+#[instrument(skip(state))]
+async fn put_auth(
+    Path(id): Path<Uuid>,
+    State(state): State<Arc<AppData>>,
+    Json(auth): Json<dt_api::Auth>,
+) -> StatusCode {
+    if let Some(account_data) = state.account_data.read().await.get(&id) {
+        info!("Updating auth");
+        *account_data.auth.write().await = auth;
+        StatusCode::OK
+    } else {
+        let api = state.api.read().await;
+        match build_account_data(&api, &auth).await {
+            Ok(account_data) => {
+                info!("Adding new account data");
+                state.account_data.write().await.insert(id, account_data);
+                StatusCode::CREATED
+            }
+            Err(e) => {
+                error!("Failed to build account data: {}", e);
+                StatusCode::INTERNAL_SERVER_ERROR
+            }
+        }
     }
 }
