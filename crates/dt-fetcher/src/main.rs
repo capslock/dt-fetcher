@@ -48,6 +48,7 @@ struct Args {
 #[derive(Debug)]
 struct AppData {
     api: RwLock<dt_api::Api>,
+    auth: RwLock<dt_api::Auth>,
     summary: RwLock<dt_api::models::Summary>,
     marks_store: RwLock<HashMap<Uuid, dt_api::models::Store>>,
     credits_store: RwLock<HashMap<Uuid, dt_api::models::Store>>,
@@ -72,18 +73,19 @@ async fn refresh_auth(app_data: Arc<AppData>, mut auth: dt_api::Auth) -> Result<
         info!("Refreshing auth");
         auth = app_data
             .api
-            .write()
+            .read()
             .await
-            .refresh_auth()
+            .refresh_auth(&auth)
             .await
             .context("failed to refresh auth")?;
+        app_data.auth.write().await.clone_from(&auth);
         info!(auth = ?auth, "Auth refreshed");
     }
 }
 
 #[instrument]
-async fn build_app_data(api: dt_api::Api) -> Result<Arc<AppData>> {
-    let summary = api.get_summary().await?;
+async fn build_app_data(api: dt_api::Api, auth: &dt_api::Auth) -> Result<Arc<AppData>> {
+    let summary = api.get_summary(auth).await?;
 
     info!(
         "Fetching stores for {} characters",
@@ -93,14 +95,14 @@ async fn build_app_data(api: dt_api::Api) -> Result<Arc<AppData>> {
     let marks_store = summary
         .characters
         .iter()
-        .map(|c| api.get_store(dt_api::models::CurrencyType::Marks, c))
+        .map(|c| api.get_store(auth, dt_api::models::CurrencyType::Marks, c))
         .collect::<FuturesOrdered<_>>()
         .collect::<Vec<_>>();
 
     let credits_store = summary
         .characters
         .iter()
-        .map(|c| api.get_store(dt_api::models::CurrencyType::Credits, c))
+        .map(|c| api.get_store(auth, dt_api::models::CurrencyType::Credits, c))
         .collect::<FuturesOrdered<_>>()
         .collect::<Vec<_>>();
 
@@ -132,10 +134,11 @@ async fn build_app_data(api: dt_api::Api) -> Result<Arc<AppData>> {
         })
         .collect::<HashMap<Uuid, Store>>();
 
-    let master_data = api.get_master_data().await?;
+    let master_data = api.get_master_data(auth).await?;
 
     Ok(Arc::new(AppData {
         api: RwLock::new(api),
+        auth: RwLock::new(auth.clone()),
         summary: RwLock::new(summary),
         marks_store: RwLock::new(marks_store),
         credits_store: RwLock::new(credits_store),
@@ -181,15 +184,15 @@ async fn main() -> Result<()> {
         .merge(figment::providers::Json::file(args.auth))
         .extract()?;
 
-    let mut api = dt_api::Api::new(auth);
+    let api = dt_api::Api::new();
 
     info!("Refreshing auth");
 
-    let auth = api.refresh_auth().await?;
+    let auth = api.refresh_auth(&auth).await?;
 
     info!("Fetching data");
 
-    let app_data = build_app_data(api).await?;
+    let app_data = build_app_data(api, &auth).await?;
     let refresh_app_data = app_data.clone();
 
     let refresh_auth_task = tokio::spawn(refresh_auth(refresh_app_data, auth));
@@ -198,6 +201,9 @@ async fn main() -> Result<()> {
         .route("/store", get(store))
         .route("/summary", get(summary))
         .route("/master_data", get(master_data))
+        .route("/store/:uuid", get(store))
+        .route("/summary/:uuid", get(summary))
+        .route("/master_data/:uuid", get(master_data))
         .with_state(app_data)
         .layer(
             TraceLayer::new_for_http()
@@ -251,7 +257,9 @@ async fn refresh_store(
     let summary = state.summary.read().await;
     let character = summary.characters.iter().find(|c| c.id == character_id);
     if let Some(character) = character {
-        let store = api.get_store(currency_type, &character).await;
+        let store = api
+            .get_store(&*state.auth.read().await, currency_type, &character)
+            .await;
         match store {
             Err(e) => {
                 error!(

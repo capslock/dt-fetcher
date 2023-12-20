@@ -42,27 +42,24 @@ impl std::fmt::Debug for Auth {
 #[derive(Clone, Debug)]
 pub struct Api {
     client: reqwest::Client,
-    auth: Auth,
 }
 
 impl Api {
     #[instrument]
-    pub fn new(auth: Auth) -> Self {
-        let client = reqwest::Client::new();
-        Self { client, auth }
+    pub fn new() -> Self {
+        Self {
+            client: reqwest::Client::new(),
+        }
     }
 
-    #[instrument(skip(self), fields(self.auth = ?self.auth))]
-    pub async fn get_summary(&self) -> Result<models::Summary> {
-        let url = format!(
-            "https://bsp-td-prod.atoma.cloud/web/{}/summary",
-            self.auth.sub
-        );
+    #[instrument(skip(self))]
+    pub async fn get_summary(&self, auth: &Auth) -> Result<models::Summary> {
+        let url = format!("https://bsp-td-prod.atoma.cloud/web/{}/summary", auth.sub);
         debug!(url = ?url, "Getting summary");
         let res = self
             .client
             .get(&url)
-            .bearer_auth(&self.auth.access_token)
+            .bearer_auth(&auth.access_token)
             .send()
             .await?;
         if res.status().is_success() {
@@ -83,14 +80,15 @@ impl Api {
             );
             return Err(anyhow!(
                 "Failed to get summary {}: {status}: {error}",
-                self.auth.sub
+                auth.sub
             ));
         }
     }
 
-    #[instrument(skip(self), fields(self.auth = ?self.auth))]
+    #[instrument(skip(self))]
     pub async fn get_store(
         &self,
+        auth: &Auth,
         currency_type: CurrencyType,
         character: &Character,
     ) -> Result<models::Store> {
@@ -102,9 +100,9 @@ impl Api {
         let res = self
             .client
             .get(&url)
-            .bearer_auth(&self.auth.access_token)
+            .bearer_auth(&auth.access_token)
             .query(&[
-                ("accountId", self.auth.sub.clone()),
+                ("accountId", auth.sub.clone()),
                 ("personal", "true".to_string()),
                 ("characterId", character.id.to_string()),
             ])
@@ -134,14 +132,14 @@ impl Api {
         }
     }
 
-    #[instrument(skip(self), fields(self.auth = ?self.auth))]
-    pub async fn get_master_data(&self) -> Result<models::MasterData> {
+    #[instrument(skip(self))]
+    pub async fn get_master_data(&self, auth: &Auth) -> Result<models::MasterData> {
         let url = format!("https://bsp-td-prod.atoma.cloud/master-data/meta/items");
         debug!(url = ?url, "Getting master data");
         let res = self
             .client
             .get(&url)
-            .bearer_auth(&self.auth.access_token)
+            .bearer_auth(&auth.access_token)
             .send()
             .await?;
         if res.status().is_success() {
@@ -164,21 +162,20 @@ impl Api {
         }
     }
 
-    #[instrument(skip(self), fields(self.auth = ?self.auth))]
-    pub async fn refresh_auth(&mut self) -> Result<Auth> {
+    #[instrument(skip(self))]
+    pub async fn refresh_auth(&self, auth: &Auth) -> Result<Auth> {
         let url = "https://bsp-auth-prod.atoma.cloud/queue/refresh";
         debug!(url = ?url, "Refreshing auth");
         let res = self
             .client
             .get(url)
-            .bearer_auth(&self.auth.refresh_token)
+            .bearer_auth(&auth.refresh_token)
             .send()
             .await?;
         if res.status().is_success() {
             let auth = res.json::<Auth>().await?;
             info!("Refreshed auth");
             debug!(auth = ?auth);
-            self.auth = auth.clone();
             Ok(auth)
         } else {
             let status = res.status();
