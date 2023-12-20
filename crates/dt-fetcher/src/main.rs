@@ -21,7 +21,7 @@ use dt_api::models::{MasterData, Store, Summary};
 use figment::{providers::Format, Figment};
 use futures::stream::{FuturesOrdered, FuturesUnordered, StreamExt};
 use tokio::sync::RwLock;
-use tower_http::trace::TraceLayer;
+use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::{debug, error, metadata::LevelFilter, Span};
 use tracing::{info, instrument};
 use tracing_subscriber::{prelude::*, EnvFilter};
@@ -33,9 +33,9 @@ struct Args {
     #[arg(
         long,
         value_parser = clap::value_parser!(PathBuf),
-        default_value = "auth.json"
+        //default_value = "auth.json"
     )]
-    auth: PathBuf,
+    auth: Option<PathBuf>,
     /// Host and port to listen on
     #[arg(
         long,
@@ -233,22 +233,27 @@ async fn main() -> Result<()> {
 
     let args = Args::parse();
 
-    let auth: dt_api::Auth = Figment::new()
-        .merge(figment::providers::Json::file(args.auth))
-        .extract()?;
-
     let api = dt_api::Api::new();
 
-    info!("Refreshing auth");
+    let app_data = if let Some(auth) = args.auth {
+        let auth = Figment::new()
+            .merge(figment::providers::Json::file(auth))
+            .extract()?;
+        info!("Refreshing auth");
 
-    let auth = api.refresh_auth(&auth).await?;
+        let auth = api.refresh_auth(&auth).await?;
 
-    info!("Fetching data");
+        info!("Fetching data");
 
-    let app_data = build_app_data(api, &auth).await?;
-    let refresh_app_data = app_data.clone();
+        build_app_data(api, &auth).await?
+    } else {
+        Arc::new(AppData {
+            account_data: RwLock::new(HashMap::new()),
+            api: RwLock::new(api),
+        })
+    };
 
-    let refresh_auth_task = tokio::spawn(refresh_auth(refresh_app_data));
+    let refresh_auth_task = tokio::spawn(refresh_auth(app_data.clone()));
 
     let app = Router::new()
         .route("/store", get(store_single))
@@ -268,7 +273,7 @@ async fn main() -> Result<()> {
                 .on_response(|_response: &Response<Body>, latency: Duration, _span: &Span| {
                 tracing::info!("response generated in {:?}", latency)
             })
-        );
+        ).layer(CorsLayer::permissive());
 
     info!("Starting server");
 
