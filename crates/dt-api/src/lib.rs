@@ -8,6 +8,7 @@ use serde_with::{
     formats::Strict, serde_as, skip_serializing_none, DurationSeconds, TimestampMilliSeconds,
 };
 use tracing::{debug, info, instrument};
+use uuid::Uuid;
 
 pub mod models;
 
@@ -23,7 +24,7 @@ pub struct Auth {
     #[serde_as(as = "Option<TimestampMilliSeconds<i64, Strict>>")]
     pub refresh_at: Option<DateTime<Utc>>,
     pub refresh_token: String,
-    pub sub: String,
+    pub sub: Uuid,
 }
 
 impl std::fmt::Debug for Auth {
@@ -102,7 +103,7 @@ impl Api {
             .get(&url)
             .bearer_auth(&auth.access_token)
             .query(&[
-                ("accountId", auth.sub.clone()),
+                ("accountId", auth.sub.to_string()),
                 ("personal", "true".to_string()),
                 ("characterId", character.id.to_string()),
             ])
