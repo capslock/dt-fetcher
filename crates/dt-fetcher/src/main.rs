@@ -20,9 +20,9 @@ use clap::Parser;
 use dt_api::models::{MasterData, Store, Summary};
 use figment::{providers::Format, Figment};
 use futures::stream::{FuturesOrdered, FuturesUnordered, StreamExt};
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
-use tracing::{debug, error, metadata::LevelFilter, Span};
+use tracing::{debug, error, metadata::LevelFilter, warn, Span};
 use tracing::{info, instrument};
 use tracing_subscriber::{prelude::*, EnvFilter};
 use uuid::Uuid;
@@ -33,7 +33,6 @@ struct Args {
     #[arg(
         long,
         value_parser = clap::value_parser!(PathBuf),
-        //default_value = "auth.json"
     )]
     auth: Option<PathBuf>,
     /// Host and port to listen on
@@ -58,6 +57,7 @@ struct AccountData {
 struct AppData {
     api: RwLock<dt_api::Api>,
     account_data: RwLock<HashMap<Uuid, AccountData>>,
+    new_auth: Mutex<Vec<Uuid>>,
 }
 
 #[derive(PartialEq, Eq)]
@@ -79,23 +79,54 @@ impl Ord for RefreshAuth {
 }
 
 #[instrument(skip_all)]
+async fn get_new_auths(
+    app_data: Arc<AppData>,
+    iter: impl Iterator<Item = Uuid>,
+) -> Vec<RefreshAuth> {
+    iter.map(|id| {
+        info!("Adding new auth {}", id);
+        let app_data = app_data.clone();
+        async move { get_new_auth(app_data, id).await }
+    })
+    .collect::<FuturesUnordered<_>>()
+    .collect::<Vec<_>>()
+    .await
+    .into_iter()
+    .filter_map(|v| v)
+    .collect::<Vec<_>>()
+}
+
+#[instrument(skip(app_data))]
+async fn get_new_auth(app_data: Arc<AppData>, id: Uuid) -> Option<RefreshAuth> {
+    if let Some(refresh_auth) = app_data.account_data.read().await.get(&id).map(|v| async {
+        RefreshAuth {
+            refresh_at: v.auth.read().await.refresh_at.unwrap_or_default(),
+            id: id.clone(),
+        }
+    }) {
+        let refresh_auth = refresh_auth.await;
+        info!(sub = ?refresh_auth.id, "Got auth");
+        Some(refresh_auth)
+    } else {
+        warn!("Failed to find account data");
+        None
+    }
+}
+
+#[instrument(skip_all)]
 async fn refresh_auth(app_data: Arc<AppData>) -> Result<()> {
-    let auths = app_data
-        .account_data
-        .read()
-        .await
-        .iter()
-        .map(|(id, v)| async {
-            RefreshAuth {
-                refresh_at: v.auth.read().await.refresh_at.unwrap_or_default(),
-                id: id.clone(),
-            }
-        })
-        .collect::<FuturesUnordered<_>>()
-        .collect::<Vec<_>>()
-        .await;
+    let auths = get_new_auths(
+        app_data.clone(),
+        app_data.account_data.read().await.keys().copied(),
+    )
+    .await;
     let mut auths = BinaryHeap::from_iter(auths);
     loop {
+        let mut new_auth = app_data.new_auth.lock().await;
+        auths.extend(get_new_auths(app_data.clone(), new_auth.iter().copied()).await);
+        new_auth.clear();
+        drop(new_auth);
+
         let duration = if let Some(refresh_auth) = auths.peek() {
             (refresh_auth.refresh_at - DateTime::from(SystemTime::now())).to_std()?
         } else {
@@ -118,7 +149,8 @@ async fn refresh_auth(app_data: Arc<AppData>) -> Result<()> {
                 .await
                 .context("failed to refresh auth")?;
             (*auth).refresh_at = Some(
-                DateTime::from(SystemTime::now()) + auth.expires_in + Duration::from_secs(300),
+                DateTime::from(SystemTime::now())
+                    + auth.expires_in.saturating_sub(Duration::from_secs(300)),
             );
             refresh_auth.refresh_at = auth.refresh_at.expect("auth refresh_at is None");
             info!(auth = ?*auth, "Auth refreshed");
@@ -196,6 +228,7 @@ async fn build_app_data(api: dt_api::Api, auth: &dt_api::Auth) -> Result<Arc<App
             build_account_data(&api, auth).await?,
         )])),
         api: RwLock::new(api),
+        new_auth: Default::default(),
     }))
 }
 
@@ -248,8 +281,9 @@ async fn main() -> Result<()> {
         build_app_data(api, &auth).await?
     } else {
         Arc::new(AppData {
-            account_data: RwLock::new(HashMap::new()),
             api: RwLock::new(api),
+            account_data: Default::default(),
+            new_auth: Default::default(),
         })
     };
 
@@ -263,6 +297,7 @@ async fn main() -> Result<()> {
         .route("/summary/:id", get(summary))
         .route("/master_data/:id", get(master_data))
         .route("/auth/:id", put(put_auth))
+        .route("/auth/:id", get(get_auth))
         .with_state(app_data)
         .layer(
             TraceLayer::new_for_http()
@@ -463,16 +498,18 @@ async fn put_auth(
     State(state): State<Arc<AppData>>,
     Json(auth): Json<dt_api::Auth>,
 ) -> StatusCode {
-    if let Some(account_data) = state.account_data.read().await.get(&id) {
+    let mut account_data = state.account_data.write().await;
+    if let Some(account_data) = account_data.get(&id) {
         info!("Updating auth");
         *account_data.auth.write().await = auth;
         StatusCode::OK
     } else {
         let api = state.api.read().await;
         match build_account_data(&api, &auth).await {
-            Ok(account_data) => {
+            Ok(new_account_data) => {
                 info!("Adding new account data");
-                state.account_data.write().await.insert(id, account_data);
+                account_data.insert(id, new_account_data);
+                state.new_auth.lock().await.push(id);
                 StatusCode::CREATED
             }
             Err(e) => {
@@ -480,5 +517,14 @@ async fn put_auth(
                 StatusCode::INTERNAL_SERVER_ERROR
             }
         }
+    }
+}
+
+#[instrument(skip(state))]
+async fn get_auth(Path(id): Path<Uuid>, State(state): State<Arc<AppData>>) -> StatusCode {
+    if let Some(_) = state.account_data.read().await.get(&id) {
+        StatusCode::OK
+    } else {
+        StatusCode::NOT_FOUND
     }
 }
