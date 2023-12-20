@@ -10,7 +10,7 @@ use std::{
 use anyhow::{anyhow, Context, Result};
 use axum::{
     body::Body,
-    extract::{Query, State},
+    extract::{Path, Query, State},
     http::{Request, Response, StatusCode},
     routing::get,
     Json, Router,
@@ -243,12 +243,12 @@ async fn main() -> Result<()> {
     let refresh_auth_task = tokio::spawn(refresh_auth(refresh_app_data));
 
     let app = Router::new()
-        .route("/store", get(store))
-        .route("/summary", get(summary))
-        .route("/master_data", get(master_data))
-        .route("/store/:uuid", get(store))
-        .route("/summary/:uuid", get(summary))
-        .route("/master_data/:uuid", get(master_data))
+        .route("/store", get(store_single))
+        .route("/summary", get(summary_single))
+        .route("/master_data", get(master_data_single))
+        .route("/store/:id", get(store))
+        .route("/summary/:id", get(summary))
+        .route("/master_data/:id", get(master_data))
         .with_state(app_data)
         .layer(
             TraceLayer::new_for_http()
@@ -280,8 +280,11 @@ async fn main() -> Result<()> {
 }
 
 #[instrument(skip(state))]
-async fn summary(State(state): State<Arc<AppData>>) -> Result<Json<Summary>, StatusCode> {
-    if let Some(account_data) = state.account_data.values().next() {
+async fn summary(
+    Path(id): Path<Uuid>,
+    State(state): State<Arc<AppData>>,
+) -> Result<Json<Summary>, StatusCode> {
+    if let Some(account_data) = state.account_data.get(&id) {
         info!("Returning cached summary");
         Ok(Json(account_data.summary.read().await.clone()))
     } else {
@@ -290,7 +293,17 @@ async fn summary(State(state): State<Arc<AppData>>) -> Result<Json<Summary>, Sta
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
+#[instrument(skip(state))]
+async fn summary_single(State(state): State<Arc<AppData>>) -> Result<Json<Summary>, StatusCode> {
+    if let Some(account_id) = state.account_data.keys().next() {
+        summary(Path(*account_id), State(state.clone())).await
+    } else {
+        error!("Failed to find account data");
+        Err(StatusCode::NOT_FOUND)
+    }
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct StoreQuery {
     character_id: Uuid,
@@ -353,27 +366,24 @@ async fn refresh_store(
 
 #[instrument(skip(state))]
 async fn store(
+    Path(id): Path<Uuid>,
     Query(StoreQuery {
         character_id,
         currency_type,
     }): Query<StoreQuery>,
     State(state): State<Arc<AppData>>,
 ) -> Result<Json<Store>, StatusCode> {
-    if let Some(account_id) = state.account_data.keys().next() {
+    if let Some(account_data) = state.account_data.get(&id) {
         let currency_store = match currency_type {
-            dt_api::models::CurrencyType::Marks => {
-                state.account_data[account_id].marks_store.read().await
-            }
-            dt_api::models::CurrencyType::Credits => {
-                state.account_data[account_id].credits_store.read().await
-            }
+            dt_api::models::CurrencyType::Marks => account_data.marks_store.read().await,
+            dt_api::models::CurrencyType::Credits => account_data.credits_store.read().await,
         };
         let char_store = currency_store.get(&character_id);
         if let Some(store) = char_store {
             if store.current_rotation_end <= DateTime::<Utc>::from(SystemTime::now()) {
                 drop(currency_store);
                 info!("Store is out of date, refreshing");
-                refresh_store(account_id, character_id, state.clone(), currency_type).await
+                refresh_store(&id, character_id, state.clone(), currency_type).await
             } else {
                 debug!("Store valid until {:?}", store.current_rotation_end);
                 info!("Returning cached store");
@@ -382,7 +392,7 @@ async fn store(
         } else {
             drop(currency_store);
             info!("Trying to fetch store");
-            refresh_store(account_id, character_id, state.clone(), currency_type).await
+            refresh_store(&id, character_id, state.clone(), currency_type).await
         }
     } else {
         error!("Failed to find account data");
@@ -391,10 +401,38 @@ async fn store(
 }
 
 #[instrument(skip(state))]
-async fn master_data(State(state): State<Arc<AppData>>) -> Result<Json<MasterData>, StatusCode> {
-    if let Some(account_data) = state.account_data.values().next() {
+async fn store_single(
+    query: Query<StoreQuery>,
+    State(state): State<Arc<AppData>>,
+) -> Result<Json<Store>, StatusCode> {
+    if let Some(account_id) = state.account_data.keys().next() {
+        store(Path(*account_id), query, State(state.clone())).await
+    } else {
+        error!("Failed to find account data");
+        Err(StatusCode::NOT_FOUND)
+    }
+}
+
+#[instrument(skip(state))]
+async fn master_data(
+    Path(id): Path<Uuid>,
+    State(state): State<Arc<AppData>>,
+) -> Result<Json<MasterData>, StatusCode> {
+    if let Some(account_data) = state.account_data.get(&id) {
         info!("Returning cached master data");
         Ok(Json(account_data.master_data.read().await.clone()))
+    } else {
+        error!("Failed to find account data");
+        Err(StatusCode::NOT_FOUND)
+    }
+}
+
+#[instrument(skip(state))]
+async fn master_data_single(
+    State(state): State<Arc<AppData>>,
+) -> Result<Json<MasterData>, StatusCode> {
+    if let Some(account_id) = state.account_data.keys().next() {
+        master_data(Path(*account_id), State(state.clone())).await
     } else {
         error!("Failed to find account data");
         Err(StatusCode::NOT_FOUND)
