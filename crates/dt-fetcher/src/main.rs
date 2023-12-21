@@ -367,6 +367,31 @@ struct StoreQuery {
 }
 
 #[instrument(skip(state))]
+async fn refresh_summary(
+    account_id: &Uuid,
+    state: Arc<AppData>,
+) -> Result<Json<Summary>, StatusCode> {
+    let api = state.api.read().await;
+    let account_data = state.account_data.read().await;
+    let new_summary = api
+        .get_summary(
+            &*state.account_data.read().await[account_id]
+                .auth
+                .read()
+                .await,
+        )
+        .await;
+    if let Ok(new_summary) = new_summary {
+        let mut summary = account_data[account_id].summary.write().await;
+        *summary = new_summary.clone();
+        Ok(Json(new_summary))
+    } else {
+        error!(error = %new_summary.unwrap_err(), "Failed to get summary");
+        Err(StatusCode::NOT_FOUND)
+    }
+}
+
+#[instrument(skip(state))]
 async fn refresh_store(
     account_id: &Uuid,
     character_id: Uuid,
@@ -375,52 +400,65 @@ async fn refresh_store(
 ) -> Result<Json<Store>, StatusCode> {
     let api = state.api.read().await;
     let account_data = state.account_data.read().await;
-    let summary = account_data[account_id].summary.read().await;
-    let character = summary.characters.iter().find(|c| c.id == character_id);
-    if let Some(character) = character {
-        let store = api
-            .get_store(
-                &*state.account_data.read().await[account_id]
-                    .auth
-                    .read()
-                    .await,
-                currency_type,
-                &character,
-            )
-            .await;
-        match store {
-            Err(e) => {
-                error!(
-                    character.id = %character_id,
-                    error = %e,
-                    "Failed to get store"
-                );
-                Err(StatusCode::INTERNAL_SERVER_ERROR)
-            }
-            Ok(store) => {
-                match currency_type {
-                    dt_api::models::CurrencyType::Marks => {
-                        account_data[account_id]
-                            .marks_store
-                            .write()
-                            .await
-                            .insert(character_id, store.clone());
-                    }
-                    dt_api::models::CurrencyType::Credits => {
-                        account_data[account_id]
-                            .credits_store
-                            .write()
-                            .await
-                            .insert(character_id, store.clone());
-                    }
+    let mut summary = account_data[account_id].summary.read().await;
+    let character =
+        if let Some(character) = summary.characters.iter().find(|c| c.id == character_id) {
+            character
+        } else {
+            info!("Failed to find character in summary, fetching new summary");
+            drop(summary);
+            if refresh_summary(account_id, state.clone()).await.is_err() {
+                error!("Failed to refresh summary");
+                return Err(StatusCode::NOT_FOUND);
+            } else {
+                summary = account_data[account_id].summary.read().await;
+                if let Some(character) = summary.characters.iter().find(|c| c.id == character_id) {
+                    character
+                } else {
+                    error!(character.id = %character_id, "Failed to find character");
+                    return Err(StatusCode::NOT_FOUND);
                 }
-                info!("Successfully fetched store");
-                Ok(Json(store))
             }
+        };
+    let store = api
+        .get_store(
+            &*state.account_data.read().await[account_id]
+                .auth
+                .read()
+                .await,
+            currency_type,
+            &character,
+        )
+        .await;
+    match store {
+        Err(e) => {
+            error!(
+                character.id = %character_id,
+                error = %e,
+                "Failed to get store"
+            );
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
-    } else {
-        error!(character.id = %character_id, "Failed to find character");
-        Err(StatusCode::NOT_FOUND)
+        Ok(store) => {
+            match currency_type {
+                dt_api::models::CurrencyType::Marks => {
+                    account_data[account_id]
+                        .marks_store
+                        .write()
+                        .await
+                        .insert(character_id, store.clone());
+                }
+                dt_api::models::CurrencyType::Credits => {
+                    account_data[account_id]
+                        .credits_store
+                        .write()
+                        .await
+                        .insert(character_id, store.clone());
+                }
+            }
+            info!("Successfully fetched store");
+            Ok(Json(store))
+        }
     }
 }
 
