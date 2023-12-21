@@ -42,6 +42,9 @@ struct Args {
         default_value = "0.0.0.0:3000"
     )]
     listen_addr: SocketAddr,
+    /// Output logs directly to systemd
+    #[arg(long, default_value = "false")]
+    log_to_systemd: bool,
 }
 
 #[derive(Debug)]
@@ -232,11 +235,11 @@ async fn build_app_data(api: dt_api::Api, auth: &dt_api::Auth) -> Result<Arc<App
     }))
 }
 
-fn init_logging() -> Result<()> {
+fn init_logging(use_systemd: bool) -> Result<()> {
     let registry = tracing_subscriber::registry();
     let layer = {
         #[cfg(target_os = "linux")]
-        if libsystemd::daemon::booted() {
+        if log_to_systemd && libsystemd::daemon::booted() {
             tracing_journald::layer()
                 .context("tracing_journald layer")?
                 .boxed()
@@ -247,7 +250,11 @@ fn init_logging() -> Result<()> {
                 .boxed()
         }
         #[cfg(not(target_os = "linux"))]
-        tracing_subscriber::fmt::layer().pretty().with_target(true)
+        if use_systemd {
+            return Err(anyhow!("Systemd logging is not supported on this platform"));
+        } else {
+            tracing_subscriber::fmt::layer().pretty().with_target(true)
+        }
     };
 
     let filter = EnvFilter::builder()
@@ -262,9 +269,9 @@ fn init_logging() -> Result<()> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    init_logging().context("Failed to initialize logging")?;
-
     let args = Args::parse();
+
+    init_logging(args.log_to_systemd).context("Failed to initialize logging")?;
 
     let api = dt_api::Api::new();
 
