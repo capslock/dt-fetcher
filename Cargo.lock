@@ -426,6 +426,7 @@ dependencies = [
  "dt-api",
  "figment",
  "futures",
+ "futures-util",
  "libsystemd",
  "reqwest",
  "serde",

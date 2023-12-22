@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::SystemTime};
+use std::time::SystemTime;
 
 use anyhow::Result;
 use axum::{
@@ -24,10 +24,10 @@ pub(crate) struct StoreQuery {
 async fn refresh_store(
     account_id: &Uuid,
     character_id: Uuid,
-    state: Arc<AppData>,
+    state: AppData,
     currency_type: dt_api::models::CurrencyType,
 ) -> Result<Json<Store>, StatusCode> {
-    let api = state.api.read().await;
+    let api = &state.api;
     let account_data = state.account_data.read().await;
     let mut summary = account_data[account_id].summary.read().await;
     let character =
@@ -49,16 +49,13 @@ async fn refresh_store(
                 }
             }
         };
-    let store = api
-        .get_store(
-            &*state.account_data.read().await[account_id]
-                .auth
-                .read()
-                .await,
-            currency_type,
-            &character,
-        )
-        .await;
+    let auth_data = if let Some(auth_data) = state.auth_data.get(account_id).await {
+        auth_data
+    } else {
+        error!(sid = ?account_id, "Failed to find auth data");
+        return Err(StatusCode::NOT_FOUND);
+    };
+    let store = api.get_store(&auth_data, currency_type, &character).await;
     match store {
         Err(e) => {
             error!(
@@ -98,7 +95,7 @@ pub(crate) async fn store(
         character_id,
         currency_type,
     }): Query<StoreQuery>,
-    State(state): State<Arc<AppData>>,
+    State(state): State<AppData>,
 ) -> Result<Json<Store>, StatusCode> {
     if let Some(account_data) = state.account_data.read().await.get(&id) {
         let currency_store = match currency_type {
@@ -130,10 +127,11 @@ pub(crate) async fn store(
 #[instrument(skip(state))]
 pub(crate) async fn store_single(
     query: Query<StoreQuery>,
-    State(state): State<Arc<AppData>>,
+    State(state): State<AppData>,
 ) -> Result<Json<Store>, StatusCode> {
-    if let Some(account_id) = state.account_data.read().await.keys().next() {
-        store(Path(*account_id), query, State(state.clone())).await
+    let account_id = state.account_data.read().await.keys().next().cloned();
+    if let Some(account_id) = account_id {
+        store(Path(account_id), query, State(state)).await
     } else {
         error!("Failed to find account data");
         Err(StatusCode::NOT_FOUND)

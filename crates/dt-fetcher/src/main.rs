@@ -4,9 +4,10 @@ use std::{
 };
 
 use anyhow::{anyhow, Context, Result};
+use auth::{AuthData, AuthManager};
 use axum::{
     body::Body,
-    extract::{Path, State},
+    extract::{FromRef, Path, State},
     http::{Request, Response, StatusCode},
     routing::{get, put},
     Json, Router,
@@ -15,7 +16,8 @@ use clap::Parser;
 use dt_api::models::{MasterData, Store, Summary};
 use figment::{providers::Format, Figment};
 use futures::stream::{FuturesOrdered, StreamExt};
-use tokio::sync::{Mutex, RwLock};
+use futures_util::future;
+use tokio::sync::RwLock;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::{error, metadata::LevelFilter, Span};
 use tracing::{info, instrument};
@@ -23,7 +25,7 @@ use tracing_subscriber::{prelude::*, EnvFilter};
 use uuid::Uuid;
 
 use crate::{
-    auth::{get_auth, put_auth, refresh_auth},
+    auth::{get_auth, put_auth},
     store::store,
     store::store_single,
 };
@@ -53,18 +55,23 @@ struct Args {
 
 #[derive(Debug)]
 struct AccountData {
-    auth: RwLock<dt_api::Auth>,
     summary: RwLock<dt_api::models::Summary>,
     marks_store: RwLock<HashMap<Uuid, dt_api::models::Store>>,
     credits_store: RwLock<HashMap<Uuid, dt_api::models::Store>>,
     master_data: RwLock<dt_api::models::MasterData>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct AppData {
-    api: RwLock<dt_api::Api>,
-    account_data: RwLock<HashMap<Uuid, AccountData>>,
-    new_auth: Mutex<Vec<Uuid>>,
+    api: dt_api::Api,
+    account_data: Arc<RwLock<HashMap<Uuid, AccountData>>>,
+    auth_data: Arc<AuthData>,
+}
+
+impl FromRef<AppData> for Arc<AuthData> {
+    fn from_ref(state: &AppData) -> Self {
+        state.auth_data.clone()
+    }
 }
 
 #[instrument]
@@ -121,7 +128,6 @@ async fn build_account_data(api: &dt_api::Api, auth: &dt_api::Auth) -> Result<Ac
     let master_data = api.get_master_data(auth).await?;
 
     Ok(AccountData {
-        auth: RwLock::new(auth.clone()),
         summary: RwLock::new(summary),
         marks_store: RwLock::new(marks_store),
         credits_store: RwLock::new(credits_store),
@@ -130,15 +136,21 @@ async fn build_account_data(api: &dt_api::Api, auth: &dt_api::Auth) -> Result<Ac
 }
 
 #[instrument]
-async fn build_app_data(api: dt_api::Api, auth: &dt_api::Auth) -> Result<Arc<AppData>> {
-    Ok(Arc::new(AppData {
-        account_data: RwLock::new(HashMap::from([(
+async fn build_app_data(
+    api: dt_api::Api,
+    auth_manager: &AuthManager,
+    auth: &dt_api::Auth,
+) -> Result<AppData> {
+    let auth_data = auth_manager.auth_data();
+    auth_data.add_auth(auth.clone()).await?;
+    Ok(AppData {
+        account_data: Arc::new(RwLock::new(HashMap::from([(
             auth.sub.clone(),
             build_account_data(&api, auth).await?,
-        )])),
-        api: RwLock::new(api),
-        new_auth: Default::default(),
-    }))
+        )]))),
+        auth_data: auth_manager.auth_data(),
+        api,
+    })
 }
 
 fn init_logging(use_systemd: bool) -> Result<()> {
@@ -180,6 +192,7 @@ async fn main() -> Result<()> {
     init_logging(args.log_to_systemd).context("Failed to initialize logging")?;
 
     let api = dt_api::Api::new();
+    let auth_manager = AuthManager::new(api.clone()).await;
 
     let app_data = if let Some(auth) = args.auth {
         let auth = Figment::new()
@@ -191,16 +204,16 @@ async fn main() -> Result<()> {
 
         info!("Fetching data");
 
-        build_app_data(api, &auth).await?
+        build_app_data(api, &auth_manager, &auth).await?
     } else {
-        Arc::new(AppData {
-            api: RwLock::new(api),
+        AppData {
+            api,
             account_data: Default::default(),
-            new_auth: Default::default(),
-        })
+            auth_data: auth_manager.auth_data(),
+        }
     };
 
-    let refresh_auth_task = tokio::spawn(refresh_auth(app_data.clone()));
+    let auth_data = app_data.auth_data.clone();
 
     let app = Router::new()
         .route("/store", get(store_single))
@@ -228,15 +241,27 @@ async fn main() -> Result<()> {
     let listener = tokio::net::TcpListener::bind(args.listen_addr).await?;
 
     let serve_task = tokio::spawn(axum::serve(listener, app).into_future());
+    let auth_task = tokio::spawn(auth_manager.start());
+    let exit_task = tokio::spawn(async move {
+        tokio::signal::ctrl_c()
+            .await
+            .context("ctrl_c handler failed")?;
+        auth_data
+            .shutdown()
+            .await
+            .context("sending shutdown signal failed")?;
+        future::pending::<()>().await;
+        Result::<()>::Ok(())
+    });
 
     info!("Listening on {}", args.listen_addr);
 
-    match tokio::try_join!(refresh_auth_task, serve_task) {
-        Ok((auth_res, serve_res)) => {
-            auth_res?;
-            serve_res?;
-            Ok(())
-        }
+    match tokio::select! {
+        res = auth_task => res?.context("Auth manager failed"),
+        res = serve_task => res?.context("Server failed"),
+        res = exit_task => res?.context("Exit task failed"),
+    } {
+        Ok(_) => Ok(()),
         Err(e) => Err(anyhow!("task failed: {e}")),
     }
 }
@@ -244,21 +269,23 @@ async fn main() -> Result<()> {
 #[instrument(skip(state))]
 async fn summary(
     Path(id): Path<Uuid>,
-    State(state): State<Arc<AppData>>,
+    State(state): State<AppData>,
 ) -> Result<Json<Summary>, StatusCode> {
-    if let Some(account_data) = state.account_data.read().await.get(&id) {
+    let account_data = state.account_data.read().await;
+    if let Some(account_data) = account_data.get(&id) {
         info!("Returning cached summary");
         Ok(Json(account_data.summary.read().await.clone()))
     } else {
-        error!("Failed to find account data");
-        Err(StatusCode::NOT_FOUND)
+        drop(account_data);
+        refresh_summary(&id, state).await
     }
 }
 
 #[instrument(skip(state))]
-async fn summary_single(State(state): State<Arc<AppData>>) -> Result<Json<Summary>, StatusCode> {
-    if let Some(account_id) = state.account_data.read().await.keys().next() {
-        summary(Path(*account_id), State(state.clone())).await
+async fn summary_single(State(state): State<AppData>) -> Result<Json<Summary>, StatusCode> {
+    let account_id = state.account_data.read().await.keys().next().cloned();
+    if let Some(account_id) = account_id {
+        summary(Path(account_id), State(state)).await
     } else {
         error!("Failed to find account data");
         Err(StatusCode::NOT_FOUND)
@@ -266,26 +293,21 @@ async fn summary_single(State(state): State<Arc<AppData>>) -> Result<Json<Summar
 }
 
 #[instrument(skip(state))]
-async fn refresh_summary(
-    account_id: &Uuid,
-    state: Arc<AppData>,
-) -> Result<Json<Summary>, StatusCode> {
-    let api = state.api.read().await;
+async fn refresh_summary(account_id: &Uuid, state: AppData) -> Result<Json<Summary>, StatusCode> {
+    let api = &state.api;
     let account_data = state.account_data.read().await;
-    let new_summary = api
-        .get_summary(
-            &*state.account_data.read().await[account_id]
-                .auth
-                .read()
-                .await,
-        )
-        .await;
-    if let Ok(new_summary) = new_summary {
-        let mut summary = account_data[account_id].summary.write().await;
-        *summary = new_summary.clone();
-        Ok(Json(new_summary))
+    if let Some(auth_data) = state.auth_data.get(account_id).await {
+        let new_summary = api.get_summary(&auth_data).await;
+        if let Ok(new_summary) = new_summary {
+            let mut summary = account_data[account_id].summary.write().await;
+            *summary = new_summary.clone();
+            Ok(Json(new_summary))
+        } else {
+            error!(error = %new_summary.unwrap_err(), "Failed to get summary");
+            Err(StatusCode::NOT_FOUND)
+        }
     } else {
-        error!(error = %new_summary.unwrap_err(), "Failed to get summary");
+        error!(sid = ?account_id, "Failed to find auth data");
         Err(StatusCode::NOT_FOUND)
     }
 }
@@ -293,7 +315,7 @@ async fn refresh_summary(
 #[instrument(skip(state))]
 async fn master_data(
     Path(id): Path<Uuid>,
-    State(state): State<Arc<AppData>>,
+    State(state): State<AppData>,
 ) -> Result<Json<MasterData>, StatusCode> {
     if let Some(account_data) = state.account_data.read().await.get(&id) {
         info!("Returning cached master data");
@@ -305,11 +327,10 @@ async fn master_data(
 }
 
 #[instrument(skip(state))]
-async fn master_data_single(
-    State(state): State<Arc<AppData>>,
-) -> Result<Json<MasterData>, StatusCode> {
-    if let Some(account_id) = state.account_data.read().await.keys().next() {
-        master_data(Path(*account_id), State(state.clone())).await
+async fn master_data_single(State(state): State<AppData>) -> Result<Json<MasterData>, StatusCode> {
+    let account_id = state.account_data.read().await.keys().next().cloned();
+    if let Some(account_id) = account_id {
+        master_data(Path(account_id), State(state)).await
     } else {
         error!("Failed to find account data");
         Err(StatusCode::NOT_FOUND)
