@@ -1,31 +1,35 @@
 use std::{
-    collections::{BinaryHeap, HashMap},
-    future::IntoFuture,
-    net::SocketAddr,
-    path::PathBuf,
-    sync::Arc,
-    time::{Duration, SystemTime},
+    collections::HashMap, future::IntoFuture, net::SocketAddr, path::PathBuf, sync::Arc,
+    time::Duration,
 };
 
 use anyhow::{anyhow, Context, Result};
 use axum::{
     body::Body,
-    extract::{Path, Query, State},
+    extract::{Path, State},
     http::{Request, Response, StatusCode},
     routing::{get, put},
     Json, Router,
 };
-use chrono::{DateTime, Utc};
 use clap::Parser;
 use dt_api::models::{MasterData, Store, Summary};
 use figment::{providers::Format, Figment};
-use futures::stream::{FuturesOrdered, FuturesUnordered, StreamExt};
+use futures::stream::{FuturesOrdered, StreamExt};
 use tokio::sync::{Mutex, RwLock};
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
-use tracing::{debug, error, metadata::LevelFilter, warn, Span};
+use tracing::{error, metadata::LevelFilter, Span};
 use tracing::{info, instrument};
 use tracing_subscriber::{prelude::*, EnvFilter};
 use uuid::Uuid;
+
+use crate::{
+    auth::{get_auth, put_auth, refresh_auth},
+    store::store,
+    store::store_single,
+};
+
+mod auth;
+mod store;
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -61,104 +65,6 @@ struct AppData {
     api: RwLock<dt_api::Api>,
     account_data: RwLock<HashMap<Uuid, AccountData>>,
     new_auth: Mutex<Vec<Uuid>>,
-}
-
-#[derive(PartialEq, Eq)]
-struct RefreshAuth {
-    id: Uuid,
-    refresh_at: DateTime<Utc>,
-}
-
-impl PartialOrd for RefreshAuth {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        other.refresh_at.partial_cmp(&self.refresh_at)
-    }
-}
-
-impl Ord for RefreshAuth {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        other.refresh_at.cmp(&self.refresh_at)
-    }
-}
-
-#[instrument(skip_all)]
-async fn get_new_auths(
-    app_data: Arc<AppData>,
-    iter: impl Iterator<Item = Uuid>,
-) -> Vec<RefreshAuth> {
-    iter.map(|id| {
-        info!("Adding new auth {}", id);
-        let app_data = app_data.clone();
-        async move { get_new_auth(app_data, id).await }
-    })
-    .collect::<FuturesUnordered<_>>()
-    .collect::<Vec<_>>()
-    .await
-    .into_iter()
-    .filter_map(|v| v)
-    .collect::<Vec<_>>()
-}
-
-#[instrument(skip(app_data))]
-async fn get_new_auth(app_data: Arc<AppData>, id: Uuid) -> Option<RefreshAuth> {
-    if let Some(refresh_auth) = app_data.account_data.read().await.get(&id).map(|v| async {
-        RefreshAuth {
-            refresh_at: v.auth.read().await.refresh_at.unwrap_or_default(),
-            id: id.clone(),
-        }
-    }) {
-        let refresh_auth = refresh_auth.await;
-        info!(sub = ?refresh_auth.id, "Got auth");
-        Some(refresh_auth)
-    } else {
-        warn!("Failed to find account data");
-        None
-    }
-}
-
-#[instrument(skip_all)]
-async fn refresh_auth(app_data: Arc<AppData>) -> Result<()> {
-    let auths = get_new_auths(
-        app_data.clone(),
-        app_data.account_data.read().await.keys().copied(),
-    )
-    .await;
-    let mut auths = BinaryHeap::from_iter(auths);
-    loop {
-        let mut new_auth = app_data.new_auth.lock().await;
-        auths.extend(get_new_auths(app_data.clone(), new_auth.iter().copied()).await);
-        new_auth.clear();
-        drop(new_auth);
-
-        let duration = if let Some(refresh_auth) = auths.peek() {
-            (refresh_auth.refresh_at - DateTime::from(SystemTime::now())).to_std()?
-        } else {
-            Duration::from_secs(300)
-        };
-
-        if duration.as_secs() > 0 {
-            info!("Refreshing auth in {:?}", duration);
-            tokio::time::sleep(duration).await;
-        }
-        if let Some(mut refresh_auth) = auths.peek_mut() {
-            info!(sub = ?refresh_auth.id, "Refreshing auth");
-            let account_data = app_data.account_data.read().await;
-            let mut auth = account_data[&refresh_auth.id].auth.write().await;
-            *auth = app_data
-                .api
-                .read()
-                .await
-                .refresh_auth(&*auth)
-                .await
-                .context("failed to refresh auth")?;
-            (*auth).refresh_at = Some(
-                DateTime::from(SystemTime::now())
-                    + auth.expires_in.saturating_sub(Duration::from_secs(300)),
-            );
-            refresh_auth.refresh_at = auth.refresh_at.expect("auth refresh_at is None");
-            info!(auth = ?*auth, "Auth refreshed");
-        }
-    }
 }
 
 #[instrument]
@@ -359,13 +265,6 @@ async fn summary_single(State(state): State<Arc<AppData>>) -> Result<Json<Summar
     }
 }
 
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct StoreQuery {
-    character_id: Uuid,
-    currency_type: dt_api::models::CurrencyType,
-}
-
 #[instrument(skip(state))]
 async fn refresh_summary(
     account_id: &Uuid,
@@ -387,126 +286,6 @@ async fn refresh_summary(
         Ok(Json(new_summary))
     } else {
         error!(error = %new_summary.unwrap_err(), "Failed to get summary");
-        Err(StatusCode::NOT_FOUND)
-    }
-}
-
-#[instrument(skip(state))]
-async fn refresh_store(
-    account_id: &Uuid,
-    character_id: Uuid,
-    state: Arc<AppData>,
-    currency_type: dt_api::models::CurrencyType,
-) -> Result<Json<Store>, StatusCode> {
-    let api = state.api.read().await;
-    let account_data = state.account_data.read().await;
-    let mut summary = account_data[account_id].summary.read().await;
-    let character =
-        if let Some(character) = summary.characters.iter().find(|c| c.id == character_id) {
-            character
-        } else {
-            info!("Failed to find character in summary, fetching new summary");
-            drop(summary);
-            if refresh_summary(account_id, state.clone()).await.is_err() {
-                error!("Failed to refresh summary");
-                return Err(StatusCode::NOT_FOUND);
-            } else {
-                summary = account_data[account_id].summary.read().await;
-                if let Some(character) = summary.characters.iter().find(|c| c.id == character_id) {
-                    character
-                } else {
-                    error!(character.id = %character_id, "Failed to find character");
-                    return Err(StatusCode::NOT_FOUND);
-                }
-            }
-        };
-    let store = api
-        .get_store(
-            &*state.account_data.read().await[account_id]
-                .auth
-                .read()
-                .await,
-            currency_type,
-            &character,
-        )
-        .await;
-    match store {
-        Err(e) => {
-            error!(
-                character.id = %character_id,
-                error = %e,
-                "Failed to get store"
-            );
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
-        }
-        Ok(store) => {
-            match currency_type {
-                dt_api::models::CurrencyType::Marks => {
-                    account_data[account_id]
-                        .marks_store
-                        .write()
-                        .await
-                        .insert(character_id, store.clone());
-                }
-                dt_api::models::CurrencyType::Credits => {
-                    account_data[account_id]
-                        .credits_store
-                        .write()
-                        .await
-                        .insert(character_id, store.clone());
-                }
-            }
-            info!("Successfully fetched store");
-            Ok(Json(store))
-        }
-    }
-}
-
-#[instrument(skip(state))]
-async fn store(
-    Path(id): Path<Uuid>,
-    Query(StoreQuery {
-        character_id,
-        currency_type,
-    }): Query<StoreQuery>,
-    State(state): State<Arc<AppData>>,
-) -> Result<Json<Store>, StatusCode> {
-    if let Some(account_data) = state.account_data.read().await.get(&id) {
-        let currency_store = match currency_type {
-            dt_api::models::CurrencyType::Marks => account_data.marks_store.read().await,
-            dt_api::models::CurrencyType::Credits => account_data.credits_store.read().await,
-        };
-        let char_store = currency_store.get(&character_id);
-        if let Some(store) = char_store {
-            if store.current_rotation_end <= DateTime::<Utc>::from(SystemTime::now()) {
-                drop(currency_store);
-                info!("Store is out of date, refreshing");
-                refresh_store(&id, character_id, state.clone(), currency_type).await
-            } else {
-                debug!("Store valid until {:?}", store.current_rotation_end);
-                info!("Returning cached store");
-                Ok(Json(store.clone()))
-            }
-        } else {
-            drop(currency_store);
-            info!("Trying to fetch store");
-            refresh_store(&id, character_id, state.clone(), currency_type).await
-        }
-    } else {
-        error!("Failed to find account data");
-        Err(StatusCode::NOT_FOUND)
-    }
-}
-
-#[instrument(skip(state))]
-async fn store_single(
-    query: Query<StoreQuery>,
-    State(state): State<Arc<AppData>>,
-) -> Result<Json<Store>, StatusCode> {
-    if let Some(account_id) = state.account_data.read().await.keys().next() {
-        store(Path(*account_id), query, State(state.clone())).await
-    } else {
-        error!("Failed to find account data");
         Err(StatusCode::NOT_FOUND)
     }
 }
@@ -534,42 +313,5 @@ async fn master_data_single(
     } else {
         error!("Failed to find account data");
         Err(StatusCode::NOT_FOUND)
-    }
-}
-
-#[instrument(skip(state))]
-async fn put_auth(
-    Path(id): Path<Uuid>,
-    State(state): State<Arc<AppData>>,
-    Json(auth): Json<dt_api::Auth>,
-) -> StatusCode {
-    let mut account_data = state.account_data.write().await;
-    if let Some(account_data) = account_data.get(&id) {
-        info!("Updating auth");
-        *account_data.auth.write().await = auth;
-        StatusCode::OK
-    } else {
-        let api = state.api.read().await;
-        match build_account_data(&api, &auth).await {
-            Ok(new_account_data) => {
-                info!("Adding new account data");
-                account_data.insert(id, new_account_data);
-                state.new_auth.lock().await.push(id);
-                StatusCode::CREATED
-            }
-            Err(e) => {
-                error!("Failed to build account data: {}", e);
-                StatusCode::INTERNAL_SERVER_ERROR
-            }
-        }
-    }
-}
-
-#[instrument(skip(state))]
-async fn get_auth(Path(id): Path<Uuid>, State(state): State<Arc<AppData>>) -> StatusCode {
-    if let Some(_) = state.account_data.read().await.get(&id) {
-        StatusCode::OK
-    } else {
-        StatusCode::NOT_FOUND
     }
 }
