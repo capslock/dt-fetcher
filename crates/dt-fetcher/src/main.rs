@@ -171,24 +171,6 @@ impl FromRef<AppData> for Accounts {
     }
 }
 
-#[instrument]
-async fn build_app_data(
-    api: dt_api::Api,
-    auth_manager: &AuthManager,
-    auth: &dt_api::Auth,
-) -> Result<AppData> {
-    let auth_data = auth_manager.auth_data();
-    auth_data.add_auth(auth.clone()).await?;
-    Ok(AppData {
-        accounts: Accounts(Arc::new(RwLock::new(HashMap::from([(
-            auth.sub.clone(),
-            AccountData::fetch(&api, auth).await?,
-        )])))),
-        auth_data: auth_manager.auth_data(),
-        api,
-    })
-}
-
 fn init_logging(use_systemd: bool) -> Result<()> {
     let registry = tracing_subscriber::registry();
     let layer = {
@@ -309,29 +291,6 @@ async fn main() -> Result<()> {
     } {
         Ok(_) => Ok(()),
         Err(e) => Err(anyhow!("task failed: {e}")),
-    }
-}
-
-#[instrument(skip(state))]
-async fn get_account_data(
-    Path(id): Path<Uuid>,
-    State(state): State<AppData>,
-) -> Result<AccountData, StatusCode> {
-    if let Some(account_data) = state.accounts.get(&id).await {
-        Ok(account_data)
-    } else {
-        if let Some(auth) = state.auth_data.get(&id).await {
-            if let Ok(account_data) = AccountData::fetch(&state.api, &auth).await {
-                state.accounts.insert(id, account_data.clone()).await;
-                Ok(account_data)
-            } else {
-                error!("Failed to find account data");
-                Err(StatusCode::NOT_FOUND)
-            }
-        } else {
-            error!("Failed to find account data");
-            Err(StatusCode::NOT_FOUND)
-        }
     }
 }
 
