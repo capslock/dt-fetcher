@@ -96,6 +96,14 @@ impl AuthManager {
         let mut auths: BinaryHeap<RefreshAuth> = BinaryHeap::new();
         loop {
             let sleep = if let Some(refresh_auth) = auths.peek() {
+                let duration = (refresh_auth.refresh_at - DateTime::from(SystemTime::now()))
+                    .max(chrono::Duration::zero())
+                    .to_std()
+                    .expect("Duration was less than 0");
+                info!(
+                    duration = ?duration,
+                    refresh_at = ?refresh_auth.refresh_at,
+                    "Sleeping until next auth refresh");
                 Either::Left(tokio::time::sleep(
                     (refresh_auth.refresh_at - DateTime::from(SystemTime::now()))
                         .max(chrono::Duration::zero())
@@ -103,6 +111,7 @@ impl AuthManager {
                         .expect("Duration was less than 0"),
                 ))
             } else {
+                info!("No auths, sleeping.");
                 Either::Right(future::pending())
             };
             tokio::select! {
@@ -111,6 +120,7 @@ impl AuthManager {
                         info!(auth = ?auth, "Adding new auth");
                         auths.push(RefreshAuth::new(&auth));
                         if let Ok(account) = AccountData::fetch(&self.api, &auth).await {
+                            info!(sub = ?auth.sub, "Adding new account data");
                             self.accounts.insert(auth.sub.clone(), account).await;
                         } else {
                             error!(auth = ?auth, "Failed to fetch account data");

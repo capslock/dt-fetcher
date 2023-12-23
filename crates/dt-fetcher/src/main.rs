@@ -137,10 +137,12 @@ impl AccountData {
 struct Accounts(Arc<RwLock<HashMap<Uuid, AccountData>>>);
 
 impl Accounts {
+    #[instrument]
     async fn get(&self, id: &Uuid) -> Option<AccountData> {
         self.0.read().await.get(id).cloned()
     }
 
+    #[instrument]
     async fn insert(&self, id: Uuid, data: AccountData) {
         self.0.write().await.insert(id, data);
     }
@@ -236,7 +238,7 @@ async fn main() -> Result<()> {
     } else {
         AppData {
             api,
-            accounts: Default::default(),
+            accounts,
             auth_data: auth_manager.auth_data(),
         }
     };
