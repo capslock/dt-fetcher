@@ -28,8 +28,13 @@ async fn refresh_store(
     currency_type: dt_api::models::CurrencyType,
 ) -> Result<Json<Store>, StatusCode> {
     let api = &state.api;
-    let account_data = state.account_data.read().await;
-    let mut summary = account_data[account_id].summary.read().await;
+    let account_data = if let Some(account_data) = state.accounts.get(account_id).await {
+        account_data
+    } else {
+        error!(sid = ?account_id, "Failed to find account data");
+        return Err(StatusCode::NOT_FOUND);
+    };
+    let mut summary = account_data.summary.read().await;
     let character =
         if let Some(character) = summary.characters.iter().find(|c| c.id == character_id) {
             character
@@ -40,7 +45,7 @@ async fn refresh_store(
                 error!("Failed to refresh summary");
                 return Err(StatusCode::NOT_FOUND);
             } else {
-                summary = account_data[account_id].summary.read().await;
+                summary = account_data.summary.read().await;
                 if let Some(character) = summary.characters.iter().find(|c| c.id == character_id) {
                     character
                 } else {
@@ -68,14 +73,14 @@ async fn refresh_store(
         Ok(store) => {
             match currency_type {
                 dt_api::models::CurrencyType::Marks => {
-                    account_data[account_id]
+                    account_data
                         .marks_store
                         .write()
                         .await
                         .insert(character_id, store.clone());
                 }
                 dt_api::models::CurrencyType::Credits => {
-                    account_data[account_id]
+                    account_data
                         .credits_store
                         .write()
                         .await
@@ -97,7 +102,7 @@ pub(crate) async fn store(
     }): Query<StoreQuery>,
     State(state): State<AppData>,
 ) -> Result<Json<Store>, StatusCode> {
-    if let Some(account_data) = state.account_data.read().await.get(&id) {
+    if let Some(account_data) = state.accounts.get(&id).await {
         let currency_store = match currency_type {
             dt_api::models::CurrencyType::Marks => account_data.marks_store.read().await,
             dt_api::models::CurrencyType::Credits => account_data.credits_store.read().await,
@@ -129,9 +134,9 @@ pub(crate) async fn store_single(
     query: Query<StoreQuery>,
     State(state): State<AppData>,
 ) -> Result<Json<Store>, StatusCode> {
-    let account_id = state.account_data.read().await.keys().next().cloned();
-    if let Some(account_id) = account_id {
-        store(Path(account_id), query, State(state)).await
+    let auth = state.auth_data.get_single().await;
+    if let Some(auth) = auth {
+        store(Path(auth.sub), query, State(state)).await
     } else {
         error!("Failed to find account data");
         Err(StatusCode::NOT_FOUND)

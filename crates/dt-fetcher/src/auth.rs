@@ -20,6 +20,8 @@ use tokio::sync::{
 use tracing::{error, info, instrument, warn};
 use uuid::Uuid;
 
+use crate::{AccountData, Accounts};
+
 const REFRESH_BUFFER: Duration = Duration::from_secs(300);
 
 #[derive(PartialEq, Eq)]
@@ -55,35 +57,37 @@ pub(crate) enum AuthCommand {
     Shutdown,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct AuthData {
-    auths: RwLock<HashMap<Uuid, Auth>>,
+    auths: Arc<RwLock<HashMap<Uuid, Auth>>>,
     tx: Sender<AuthCommand>,
 }
 
 #[derive(Debug)]
 pub(crate) struct AuthManager {
     api: dt_api::Api,
-    auth_data: Arc<AuthData>,
+    auth_data: AuthData,
+    accounts: Accounts,
     rx: Receiver<AuthCommand>,
 }
 
 impl AuthManager {
     #[instrument(skip_all)]
-    pub async fn new(api: dt_api::Api) -> Self {
+    pub fn new(api: dt_api::Api, accounts: Accounts) -> Self {
         let (tx, rx) = channel(100);
         AuthManager {
-            auth_data: Arc::new(AuthData {
-                auths: RwLock::new(HashMap::new()),
+            auth_data: AuthData {
+                auths: Arc::new(RwLock::new(HashMap::new())),
                 tx,
-            }),
+            },
             rx,
             api,
+            accounts,
         }
     }
 
     #[instrument(skip_all)]
-    pub fn auth_data(&self) -> Arc<AuthData> {
+    pub fn auth_data(&self) -> AuthData {
         self.auth_data.clone()
     }
 
@@ -106,6 +110,11 @@ impl AuthManager {
                     Some(AuthCommand::NewAuth(auth)) => {
                         info!(auth = ?auth, "Adding new auth");
                         auths.push(RefreshAuth::new(&auth));
+                        if let Ok(account) = AccountData::fetch(&self.api, &auth).await {
+                            self.accounts.insert(auth.sub.clone(), account).await;
+                        } else {
+                            error!(auth = ?auth, "Failed to fetch account data");
+                        }
                         self.auth_data.auths.write().await.insert(auth.sub, auth);
                     }
                     Some(AuthCommand::Shutdown) => {
@@ -166,6 +175,10 @@ impl AuthData {
         self.auths.read().await.get(id).cloned()
     }
 
+    pub async fn get_single(&self) -> Option<Auth> {
+        self.auths.read().await.values().next().cloned()
+    }
+
     #[instrument(skip(self))]
     pub async fn shutdown(&self) -> Result<()> {
         Ok(self
@@ -179,7 +192,7 @@ impl AuthData {
 #[instrument(skip(state))]
 pub(crate) async fn put_auth(
     Path(id): Path<Uuid>,
-    State(state): State<Arc<AuthData>>,
+    State(state): State<AuthData>,
     Json(auth): Json<dt_api::Auth>,
 ) -> StatusCode {
     if let Some(_) = state.auths.read().await.get(&id) {
@@ -192,10 +205,7 @@ pub(crate) async fn put_auth(
 }
 
 #[instrument(skip(state))]
-pub(crate) async fn get_auth(
-    Path(id): Path<Uuid>,
-    State(state): State<Arc<AuthData>>,
-) -> StatusCode {
+pub(crate) async fn get_auth(Path(id): Path<Uuid>, State(state): State<AuthData>) -> StatusCode {
     if let Some(_) = state.auths.read().await.get(&id) {
         StatusCode::OK
     } else {
