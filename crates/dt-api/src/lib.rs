@@ -135,11 +135,11 @@ impl Api {
 
     #[instrument(skip(self))]
     pub async fn get_master_data(&self, auth: &Auth) -> Result<models::MasterData> {
-        let url = format!("https://bsp-td-prod.atoma.cloud/master-data/meta/items");
+        let url = "https://bsp-td-prod.atoma.cloud/master-data/meta/items";
         debug!(url = ?url, "Getting master data");
         let res = self
             .client
-            .get(&url)
+            .get(url)
             .bearer_auth(&auth.access_token)
             .send()
             .await?;
