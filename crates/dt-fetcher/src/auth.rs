@@ -41,7 +41,7 @@ impl RefreshAuth {
 
 impl PartialOrd for RefreshAuth {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        other.refresh_at.partial_cmp(&self.refresh_at)
+        Some(self.cmp(other))
     }
 }
 
@@ -173,8 +173,7 @@ impl AuthManager {
 impl AuthData {
     #[instrument(skip(self))]
     pub async fn add_auth(&self, auth: Auth) -> Result<()> {
-        self
-            .tx
+        self.tx
             .send(AuthCommand::NewAuth(auth))
             .await
             .context("Failed to send auth")
@@ -191,8 +190,7 @@ impl AuthData {
 
     #[instrument(skip(self))]
     pub async fn shutdown(&self) -> Result<()> {
-        self
-            .tx
+        self.tx
             .send(AuthCommand::Shutdown)
             .await
             .context("Failed to send shutdown")
@@ -205,7 +203,7 @@ pub(crate) async fn put_auth(
     State(state): State<AuthData>,
     Json(auth): Json<dt_api::Auth>,
 ) -> StatusCode {
-    if let Some(_) = state.auths.read().await.get(&id) {
+    if state.auths.read().await.get(&id).is_some() {
         return StatusCode::OK;
     } else if let Err(e) = state.add_auth(auth).await {
         error!("Failed to add auth: {}", e);
@@ -216,7 +214,7 @@ pub(crate) async fn put_auth(
 
 #[instrument(skip(state))]
 pub(crate) async fn get_auth(Path(id): Path<Uuid>, State(state): State<AuthData>) -> StatusCode {
-    if let Some(_) = state.auths.read().await.get(&id) {
+    if state.auths.read().await.get(&id).is_some() {
         StatusCode::OK
     } else {
         StatusCode::NOT_FOUND
