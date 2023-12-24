@@ -60,7 +60,7 @@ async fn refresh_store(
         error!(sid = ?account_id, "Failed to find auth data");
         return Err(StatusCode::NOT_FOUND);
     };
-    let store = api.get_store(&auth_data, currency_type, &character).await;
+    let store = api.get_store(&auth_data, currency_type, character).await;
     match store {
         Err(e) => {
             error!(

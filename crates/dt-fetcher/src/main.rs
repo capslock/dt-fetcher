@@ -106,7 +106,7 @@ impl AccountData {
             .iter()
             .zip(marks_store.into_iter())
             .filter_map(|(c, s)| match s {
-                Ok(s) => Some((c.id.clone(), s)),
+                Ok(s) => Some((c.id, s)),
                 Err(e) => {
                     error!("Failed to get marks store: {}", e);
                     None
@@ -119,7 +119,7 @@ impl AccountData {
             .iter()
             .zip(credits_store.into_iter())
             .filter_map(|(c, s)| match s {
-                Ok(s) => Some((c.id.clone(), s)),
+                Ok(s) => Some((c.id, s)),
                 Err(e) => {
                     error!("Failed to get credits store: {}", e);
                     None
@@ -227,7 +227,7 @@ async fn main() -> Result<()> {
         info!("Fetching data");
 
         accounts
-            .insert(auth.sub.clone(), AccountData::fetch(&api, &auth).await?)
+            .insert(auth.sub, AccountData::fetch(&api, &auth).await?)
             .await;
 
         AppData {

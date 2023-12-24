@@ -121,7 +121,7 @@ impl AuthManager {
                         auths.push(RefreshAuth::new(&auth));
                         if let Ok(account) = AccountData::fetch(&self.api, &auth).await {
                             info!(sub = ?auth.sub, "Adding new account data");
-                            self.accounts.insert(auth.sub.clone(), account).await;
+                            self.accounts.insert(auth.sub, account).await;
                         } else {
                             error!(auth = ?auth, "Failed to fetch account data");
                         }
@@ -155,7 +155,7 @@ impl AuthManager {
                     .refresh_auth(&*auth)
                     .await
                     .context("failed to refresh auth")?;
-                (*auth).refresh_at = Some(
+                auth.refresh_at = Some(
                     DateTime::from(SystemTime::now())
                         + auth.expires_in.saturating_sub(REFRESH_BUFFER),
                 );
@@ -173,11 +173,11 @@ impl AuthManager {
 impl AuthData {
     #[instrument(skip(self))]
     pub async fn add_auth(&self, auth: Auth) -> Result<()> {
-        Ok(self
+        self
             .tx
             .send(AuthCommand::NewAuth(auth))
             .await
-            .context("Failed to send auth")?)
+            .context("Failed to send auth")
     }
 
     #[instrument(skip(self))]
@@ -191,11 +191,11 @@ impl AuthData {
 
     #[instrument(skip(self))]
     pub async fn shutdown(&self) -> Result<()> {
-        Ok(self
+        self
             .tx
             .send(AuthCommand::Shutdown)
             .await
-            .context("Failed to send shutdown")?)
+            .context("Failed to send shutdown")
     }
 }
 
