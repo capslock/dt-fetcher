@@ -111,7 +111,7 @@ impl AuthManager {
                         .expect("Duration was less than 0"),
                 ))
             } else {
-                info!("No auths, sleeping.");
+                info!("No auths, sleeping");
                 Either::Right(future::pending())
             };
             tokio::select! {

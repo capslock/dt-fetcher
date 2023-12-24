@@ -291,7 +291,10 @@ async fn main() -> Result<()> {
         res = serve_task => res?.context("Server failed"),
         res = exit_task => res?.context("Exit task failed"),
     } {
-        Ok(_) => Ok(()),
+        Ok(_) => {
+            info!("Exiting");
+            Ok(())
+        }
         Err(e) => Err(anyhow!("task failed: {e}")),
     }
 }
