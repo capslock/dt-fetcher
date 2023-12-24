@@ -177,7 +177,7 @@ fn init_logging(use_systemd: bool) -> Result<()> {
     let registry = tracing_subscriber::registry();
     let layer = {
         #[cfg(target_os = "linux")]
-        if log_to_systemd && libsystemd::daemon::booted() {
+        if use_systemd && libsystemd::daemon::booted() {
             tracing_journald::layer()
                 .context("tracing_journald layer")?
                 .boxed()
