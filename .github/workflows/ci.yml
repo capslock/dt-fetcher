@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - '**/Cargo.toml'
+      - '**/Cargo.lock'
+      - '**.rs'
+      - '**.nix'
+      - '**/flake.lock'
+      - '.github/workflows/ci.yml'
+  pull_request:
+    branches: [ "main" ]
+    paths:
+      - '**/Cargo.toml'
+      - '**/Cargo.lock'
+      - '**.rs'
+      - '**.nix'
+      - '**/flake.lock'
+      - '.github/workflows/ci.yml'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check-rust:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+    - uses: actions/checkout@v3
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: clippy
+    - uses: clechasseur/rs-clippy-check@v3
+      with:
+        args: --all-features
+    - name: Build
+      run: cargo build --verbose
+    - name: Run tests
+      run: cargo test --verbose
+
+  verify-nix:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+    - uses: actions/checkout@v3
+    - name: Install Nix
+      uses: cachix/install-nix-action@v22
+      with:
+        github_access_token: ${{ secrets.GITHUB_TOKEN }}
+    - name: Check flake formatting
+      run: nix run nixpkgs#alejandra -- -c .
+    - name: Check flake.nix
+      run: nix flake check --all-systems
+    - name: Check Nix flake Nixpkgs inputs
+      uses: DeterminateSystems/flake-checker-action@main
+    - name: Build flake
+      run: nix build
