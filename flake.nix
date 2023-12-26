@@ -58,7 +58,6 @@
             buildInputs =
               [
                 pkgs.openssl
-                pkgs.sqlite
               ]
               ++ pkgs.lib.optionals pkgs.stdenv.isDarwin (macFrameworks pkgs);
           }) {toolchain = rust;};
