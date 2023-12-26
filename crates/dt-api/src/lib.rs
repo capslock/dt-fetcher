@@ -12,32 +12,37 @@ use uuid::Uuid;
 
 pub mod models;
 
-#[derive(Debug, Error)]
-#[error(transparent)]
-pub struct Error(#[from] ApiError);
-
+/// Errors that can occur when interacting with the API.
 #[derive(Error, Debug)]
-enum ApiError {
-    #[error("Request failed")]
-    Reqwest(#[from] reqwest::Error),
+pub enum Error {
+    /// An error occurred while sending a request to the API.
+    #[error("Sending request failed")]
+    RequestFailed(#[from] reqwest::Error),
+    /// An error occurred while parsing the response from the API.
+    #[error("Parsing response failed")]
+    InvalidResponse(#[source] reqwest::Error),
+    /// The server returned an error response when getting the summary.
     #[error("Failed to get summary for {sub}: {status}: {error}")]
     GetSummary {
         status: reqwest::StatusCode,
         error: serde_json::Value,
         sub: Uuid,
     },
-    #[error("Failed to get store {currency_type} {archetype}: {status}: {error}")]
+    /// The server returned an error response when getting the store.
+    #[error("Failed to get {currency_type} store for {archetype}: {status}: {error}")]
     GetStore {
         status: reqwest::StatusCode,
         error: serde_json::Value,
         currency_type: CurrencyType,
         archetype: String,
     },
+    /// The server returned an error response when getting the master data.
     #[error("Failed to get master data: {status}: {error}")]
     GetMasterData {
         status: reqwest::StatusCode,
         error: serde_json::Value,
     },
+    /// The server returned an error response when refreshing the auth.
     #[error("Failed to refresh auth: {status}: {error}")]
     RefreshAuth {
         status: reqwest::StatusCode,
@@ -97,13 +102,12 @@ impl Api {
             .get(&url)
             .bearer_auth(&auth.access_token)
             .send()
-            .await
-            .map_err(ApiError::Reqwest)?;
+            .await?;
         if res.status().is_success() {
             let account_data = res
                 .json::<models::Summary>()
                 .await
-                .map_err(ApiError::Reqwest)?;
+                .map_err(Error::InvalidResponse)?;
             info!("Got summary");
             debug!(summary = ?account_data);
             Ok(account_data)
@@ -118,12 +122,11 @@ impl Api {
                 error = ?error,
                 "Failed to get summary"
             );
-            return Err(ApiError::GetSummary {
+            return Err(Error::GetSummary {
                 status,
                 error,
                 sub: auth.sub,
-            }
-            .into());
+            });
         }
     }
 
@@ -149,13 +152,12 @@ impl Api {
                 ("characterId", character.id.to_string()),
             ])
             .send()
-            .await
-            .map_err(ApiError::Reqwest)?;
+            .await?;
         if res.status().is_success() {
             let store = res
                 .json::<models::Store>()
                 .await
-                .map_err(ApiError::Reqwest)?;
+                .map_err(Error::InvalidResponse)?;
             info!("Got store");
             debug!(store = ?store);
             Ok(store)
@@ -170,13 +172,12 @@ impl Api {
                 error = ?error,
                 "Failed to get store"
             );
-            return Err(ApiError::GetStore {
+            return Err(Error::GetStore {
                 status,
                 error,
                 currency_type,
                 archetype: character.archetype.clone(),
-            }
-            .into());
+            });
         }
     }
 
@@ -189,13 +190,12 @@ impl Api {
             .get(url)
             .bearer_auth(&auth.access_token)
             .send()
-            .await
-            .map_err(ApiError::Reqwest)?;
+            .await?;
         if res.status().is_success() {
             let master_data = res
                 .json::<models::MasterData>()
                 .await
-                .map_err(ApiError::Reqwest)?;
+                .map_err(Error::InvalidResponse)?;
             info!("Got master data");
             debug!(master_data = ?master_data);
             Ok(master_data)
@@ -210,7 +210,7 @@ impl Api {
                 error = ?error,
                 "Failed to get master data"
             );
-            Err(ApiError::GetMasterData { status, error }.into())
+            Err(Error::GetMasterData { status, error })
         }
     }
 
@@ -223,10 +223,9 @@ impl Api {
             .get(url)
             .bearer_auth(&auth.refresh_token)
             .send()
-            .await
-            .map_err(ApiError::Reqwest)?;
+            .await?;
         if res.status().is_success() {
-            let auth = res.json::<Auth>().await.map_err(ApiError::Reqwest)?;
+            let auth = res.json::<Auth>().await.map_err(Error::InvalidResponse)?;
             info!("Refreshed auth");
             debug!(auth = ?auth);
             Ok(auth)
@@ -241,7 +240,7 @@ impl Api {
                 error = ?error,
                 "Failed to refresh auth"
             );
-            Err(ApiError::RefreshAuth { status, error }.into())
+            Err(Error::RefreshAuth { status, error })
         }
     }
 }
