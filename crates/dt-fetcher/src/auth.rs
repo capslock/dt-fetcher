@@ -118,6 +118,10 @@ impl AuthManager {
                 command = self.rx.recv() => match command {
                     Some(AuthCommand::NewAuth(auth)) => {
                         info!(auth = ?auth, "Adding new auth");
+                        if self.auth_data.auths.read().await.get(&auth.sub).is_some() {
+                            error!(auth = ?auth, "Auth already exists");
+                            continue;
+                        }
                         auths.push(RefreshAuth::new(&auth));
                         if let Ok(account) = AccountData::fetch(&self.api, &auth).await {
                             info!(sub = ?auth.sub, "Adding new account data");
