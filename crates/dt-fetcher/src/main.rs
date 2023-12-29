@@ -216,31 +216,22 @@ async fn main() -> Result<()> {
     let accounts = Accounts::default();
     let auth_manager = AuthManager::new(api.clone(), accounts.clone());
 
-    let app_data = if let Some(auth) = args.auth {
+    if let Some(auth) = args.auth {
         let auth = Figment::new()
             .merge(figment::providers::Json::file(auth))
             .extract()?;
-        info!("Refreshing auth");
 
-        let auth = api.refresh_auth(&auth).await?;
+        auth_manager
+            .auth_data()
+            .add_auth(auth)
+            .await
+            .context("Failed to add auth")?;
+    }
 
-        info!("Fetching data");
-
-        accounts
-            .insert(auth.sub, AccountData::fetch(&api, &auth).await?)
-            .await;
-
-        AppData {
-            api,
-            accounts,
-            auth_data: auth_manager.auth_data(),
-        }
-    } else {
-        AppData {
-            api,
-            accounts,
-            auth_data: auth_manager.auth_data(),
-        }
+    let app_data = AppData {
+        api,
+        accounts,
+        auth_data: auth_manager.auth_data(),
     };
 
     let auth_data = app_data.auth_data.clone();
