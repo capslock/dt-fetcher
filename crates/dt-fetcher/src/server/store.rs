@@ -11,7 +11,7 @@ use dt_api::models::Store;
 use tracing::{debug, error, info, instrument};
 use uuid::Uuid;
 
-use crate::{refresh_summary, AppData};
+use crate::server::{refresh_summary, AppData};
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]

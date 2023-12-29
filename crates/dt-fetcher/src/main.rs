@@ -1,37 +1,20 @@
-use std::{
-    collections::HashMap, future::IntoFuture, net::SocketAddr, path::PathBuf, sync::Arc,
-    time::Duration,
-};
+use std::{collections::HashMap, net::SocketAddr, path::PathBuf, sync::Arc};
 
 use anyhow::{anyhow, Context, Result};
 use auth::{AuthData, AuthManager};
-use axum::{
-    body::Body,
-    extract::{FromRef, Path, State},
-    http::{Request, Response, StatusCode},
-    routing::{get, put},
-    Json, Router,
-};
 use clap::Parser;
-use dt_api::models::{MasterData, Store, Summary};
+use dt_api::models::{MasterData, Store};
 use figment::{providers::Format, Figment};
 use futures::stream::{FuturesOrdered, StreamExt};
 use futures_util::future;
 use tokio::sync::RwLock;
-use tower_http::{cors::CorsLayer, trace::TraceLayer};
-use tracing::{error, metadata::LevelFilter, Span};
+use tracing::{error, metadata::LevelFilter};
 use tracing::{info, instrument};
 use tracing_subscriber::{prelude::*, EnvFilter};
 use uuid::Uuid;
 
-use crate::{
-    auth::{get_auth, put_auth},
-    store::store,
-    store::store_single,
-};
-
 mod auth;
-mod store;
+mod server;
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -51,6 +34,38 @@ struct Args {
     /// Output logs directly to systemd
     #[arg(long, default_value = "false")]
     log_to_systemd: bool,
+}
+
+fn init_logging(use_systemd: bool) -> Result<()> {
+    let registry = tracing_subscriber::registry();
+    let layer = {
+        #[cfg(target_os = "linux")]
+        if use_systemd && libsystemd::daemon::booted() {
+            tracing_journald::layer()
+                .context("tracing_journald layer")?
+                .boxed()
+        } else {
+            tracing_subscriber::fmt::layer()
+                .pretty()
+                .with_target(true)
+                .boxed()
+        }
+        #[cfg(not(target_os = "linux"))]
+        if use_systemd {
+            return Err(anyhow!("Systemd logging is not supported on this platform"));
+        } else {
+            tracing_subscriber::fmt::layer().pretty().with_target(true)
+        }
+    };
+
+    let filter = EnvFilter::builder()
+        .with_default_directive(LevelFilter::INFO.into())
+        .from_env()
+        .context("Failed to parse filter from env")?;
+
+    registry.with(filter).with(layer).init();
+
+    Ok(())
 }
 
 #[derive(Debug, Clone)]
@@ -148,63 +163,6 @@ impl Accounts {
     }
 }
 
-#[derive(Debug, Clone)]
-struct AppData {
-    api: dt_api::Api,
-    accounts: Accounts,
-    auth_data: AuthData,
-}
-
-impl FromRef<AppData> for AuthData {
-    fn from_ref(state: &AppData) -> Self {
-        state.auth_data.clone()
-    }
-}
-
-impl FromRef<AppData> for dt_api::Api {
-    fn from_ref(state: &AppData) -> Self {
-        state.api.clone()
-    }
-}
-
-impl FromRef<AppData> for Accounts {
-    fn from_ref(state: &AppData) -> Self {
-        state.accounts.clone()
-    }
-}
-
-fn init_logging(use_systemd: bool) -> Result<()> {
-    let registry = tracing_subscriber::registry();
-    let layer = {
-        #[cfg(target_os = "linux")]
-        if use_systemd && libsystemd::daemon::booted() {
-            tracing_journald::layer()
-                .context("tracing_journald layer")?
-                .boxed()
-        } else {
-            tracing_subscriber::fmt::layer()
-                .pretty()
-                .with_target(true)
-                .boxed()
-        }
-        #[cfg(not(target_os = "linux"))]
-        if use_systemd {
-            return Err(anyhow!("Systemd logging is not supported on this platform"));
-        } else {
-            tracing_subscriber::fmt::layer().pretty().with_target(true)
-        }
-    };
-
-    let filter = EnvFilter::builder()
-        .with_default_directive(LevelFilter::INFO.into())
-        .from_env()
-        .context("Failed to parse filter from env")?;
-
-    registry.with(filter).with(layer).init();
-
-    Ok(())
-}
-
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
@@ -214,6 +172,7 @@ async fn main() -> Result<()> {
     let api = dt_api::Api::new();
 
     let accounts = Accounts::default();
+
     let auth_manager = AuthManager::new(api.clone(), accounts.clone());
 
     if let Some(auth) = args.auth {
@@ -228,40 +187,13 @@ async fn main() -> Result<()> {
             .context("Failed to add auth")?;
     }
 
-    let app_data = AppData {
-        api,
-        accounts,
-        auth_data: auth_manager.auth_data(),
-    };
+    let auth_data = auth_manager.auth_data();
 
-    let auth_data = app_data.auth_data.clone();
-
-    let app = Router::new()
-        .route("/store", get(store_single))
-        .route("/summary", get(summary_single))
-        .route("/master_data", get(master_data_single))
-        .route("/store/:id", get(store))
-        .route("/summary/:id", get(summary))
-        .route("/master_data/:id", get(master_data))
-        .route("/auth/:id", put(put_auth))
-        .route("/auth/:id", get(get_auth))
-        .with_state(app_data)
-        .layer(
-            TraceLayer::new_for_http()
-                .make_span_with(|_request: &Request<Body>| tracing::info_span!("http-request"))
-                .on_request(|request: &Request<Body>, _span: &Span| {
-                    tracing::info!(method = %request.method(), path = %request.uri().path(), "got request")
-                })
-                .on_response(|_response: &Response<Body>, latency: Duration, _span: &Span| {
-                tracing::info!("response generated in {:?}", latency)
-            })
-        ).layer(CorsLayer::permissive());
+    let server = server::Server::new(api, accounts, auth_data.clone(), args.listen_addr);
 
     info!("Starting server");
 
-    let listener = tokio::net::TcpListener::bind(args.listen_addr).await?;
-
-    let serve_task = tokio::spawn(axum::serve(listener, app).into_future());
+    let serve_task = tokio::spawn(server.start());
     let auth_task = tokio::spawn(auth_manager.start());
     let exit_task = tokio::spawn(async move {
         tokio::signal::ctrl_c()
@@ -287,79 +219,5 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Err(e) => Err(anyhow!("task failed: {e}")),
-    }
-}
-
-#[instrument(skip(state))]
-async fn summary(
-    Path(id): Path<Uuid>,
-    State(state): State<AppData>,
-) -> Result<Json<Summary>, StatusCode> {
-    if let Some(account_data) = state.accounts.get(&id).await {
-        info!("Returning cached summary");
-        Ok(Json(account_data.summary.read().await.clone()))
-    } else {
-        refresh_summary(&id, state).await
-    }
-}
-
-#[instrument(skip(state))]
-async fn summary_single(State(state): State<AppData>) -> Result<Json<Summary>, StatusCode> {
-    let auth = state.auth_data.get_single().await;
-    if let Some(auth) = auth {
-        summary(Path(auth.sub), State(state)).await
-    } else {
-        error!("Failed to find account data");
-        Err(StatusCode::NOT_FOUND)
-    }
-}
-
-#[instrument(skip(state))]
-async fn refresh_summary(account_id: &Uuid, state: AppData) -> Result<Json<Summary>, StatusCode> {
-    let api = &state.api;
-    let account_data = if let Some(account_data) = state.accounts.get(account_id).await {
-        account_data
-    } else {
-        error!(sid = ?account_id, "Failed to find account data");
-        return Err(StatusCode::NOT_FOUND);
-    };
-    if let Some(auth_data) = state.auth_data.get(account_id).await {
-        let new_summary = api.get_summary(&auth_data).await;
-        if let Ok(new_summary) = new_summary {
-            let mut summary = account_data.summary.write().await;
-            *summary = new_summary.clone();
-            Ok(Json(new_summary))
-        } else {
-            error!(error = %new_summary.unwrap_err(), "Failed to get summary");
-            Err(StatusCode::NOT_FOUND)
-        }
-    } else {
-        error!(sid = ?account_id, "Failed to find auth data");
-        Err(StatusCode::NOT_FOUND)
-    }
-}
-
-#[instrument(skip(state))]
-async fn master_data(
-    Path(id): Path<Uuid>,
-    State(state): State<AppData>,
-) -> Result<Json<MasterData>, StatusCode> {
-    if let Some(account_data) = state.accounts.get(&id).await {
-        info!("Returning cached master data");
-        Ok(Json(account_data.master_data.read().await.clone()))
-    } else {
-        error!("Failed to find account data");
-        Err(StatusCode::NOT_FOUND)
-    }
-}
-
-#[instrument(skip(state))]
-async fn master_data_single(State(state): State<AppData>) -> Result<Json<MasterData>, StatusCode> {
-    let auth = state.auth_data.get_single().await;
-    if let Some(auth) = auth {
-        master_data(Path(auth.sub), State(state)).await
-    } else {
-        error!("Failed to find account data");
-        Err(StatusCode::NOT_FOUND)
     }
 }
