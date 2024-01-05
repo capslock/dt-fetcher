@@ -96,15 +96,25 @@ impl Server {
     }
 }
 
+const SUMMARY_REFRESH_INTERVAL_MINS: i64 = 60;
+
 #[instrument(skip(state))]
 async fn summary(
     Path(id): Path<Uuid>,
     State(state): State<AppData>,
 ) -> Result<Json<Summary>, StatusCode> {
     if let Some(account_data) = state.accounts.get(&id).await {
-        info!("Returning cached summary");
-        Ok(Json(account_data.summary.read().await.clone()))
+        if account_data.last_updated
+            < chrono::Utc::now() - chrono::Duration::minutes(SUMMARY_REFRESH_INTERVAL_MINS)
+        {
+            info!("Summary out of date; refreshing");
+            refresh_summary(&id, state).await
+        } else {
+            info!("Returning cached summary");
+            Ok(Json(account_data.summary.read().await.clone()))
+        }
     } else {
+        info!("Account data not found, attempting to refresh");
         refresh_summary(&id, state).await
     }
 }
@@ -134,6 +144,7 @@ async fn refresh_summary(account_id: &Uuid, state: AppData) -> Result<Json<Summa
         if let Ok(new_summary) = new_summary {
             let mut summary = account_data.summary.write().await;
             *summary = new_summary.clone();
+            state.accounts.update_timestamp(account_id).await;
             Ok(Json(new_summary))
         } else {
             error!(error = %new_summary.unwrap_err(), "Failed to get summary");

@@ -2,6 +2,7 @@ use std::{collections::HashMap, net::SocketAddr, path::PathBuf, sync::Arc};
 
 use anyhow::{anyhow, Context, Result};
 use auth::{AuthData, AuthManager};
+use chrono::{DateTime, Utc};
 use clap::Parser;
 use dt_api::models::{MasterData, Store};
 use figment::{providers::Format, Figment};
@@ -70,6 +71,7 @@ fn init_logging(use_systemd: bool) -> Result<()> {
 
 #[derive(Debug, Clone)]
 struct AccountData {
+    last_updated: DateTime<Utc>,
     summary: Arc<RwLock<dt_api::models::Summary>>,
     marks_store: Arc<RwLock<HashMap<Uuid, dt_api::models::Store>>>,
     credits_store: Arc<RwLock<HashMap<Uuid, dt_api::models::Store>>>,
@@ -84,6 +86,7 @@ impl AccountData {
         master_data: MasterData,
     ) -> Self {
         Self {
+            last_updated: Utc::now(),
             summary: Arc::new(RwLock::new(summary)),
             marks_store: Arc::new(RwLock::new(marks_store)),
             credits_store: Arc::new(RwLock::new(credits_store)),
@@ -160,6 +163,21 @@ impl Accounts {
     #[instrument]
     async fn insert(&self, id: Uuid, data: AccountData) {
         self.0.write().await.insert(id, data);
+    }
+
+    #[instrument]
+    async fn update_timestamp(&self, id: &Uuid) {
+        if let Some(account_data) = self.0.write().await.get_mut(id) {
+            account_data.last_updated = Utc::now();
+        }
+    }
+
+    #[instrument]
+    async fn timestamp(&self, id: &Uuid) -> Option<DateTime<Utc>> {
+        if let Some(account_data) = self.0.read().await.get(id) {
+            return Some(account_data.last_updated);
+        }
+        None
     }
 }
 
