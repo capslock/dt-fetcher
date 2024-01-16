@@ -11,14 +11,13 @@ use axum::{
     Json,
 };
 use chrono::{DateTime, Utc};
-use dt_api::Auth;
+use dt_api::{models::AccountId, Auth};
 use futures_util::future::{self, Either};
 use tokio::sync::{
     mpsc::{channel, Receiver, Sender},
     RwLock,
 };
 use tracing::{error, info, instrument, warn};
-use uuid::Uuid;
 
 use crate::{AccountData, Accounts};
 
@@ -26,7 +25,7 @@ const REFRESH_BUFFER: Duration = Duration::from_secs(300);
 
 #[derive(PartialEq, Eq)]
 struct RefreshAuth {
-    id: Uuid,
+    id: AccountId,
     refresh_at: DateTime<Utc>,
 }
 
@@ -59,7 +58,7 @@ pub(crate) enum AuthCommand {
 
 #[derive(Debug, Clone)]
 pub(crate) struct AuthData {
-    auths: Arc<RwLock<HashMap<Uuid, Auth>>>,
+    auths: Arc<RwLock<HashMap<AccountId, Auth>>>,
     tx: Sender<AuthCommand>,
 }
 
@@ -184,7 +183,7 @@ impl AuthData {
     }
 
     #[instrument(skip(self))]
-    pub async fn get(&self, id: &Uuid) -> Option<Auth> {
+    pub async fn get(&self, id: &AccountId) -> Option<Auth> {
         self.auths.read().await.get(id).cloned()
     }
 
@@ -203,7 +202,7 @@ impl AuthData {
 
 #[instrument(skip(state))]
 pub(crate) async fn put_auth(
-    Path(id): Path<Uuid>,
+    Path(id): Path<AccountId>,
     State(state): State<AuthData>,
     Json(auth): Json<dt_api::Auth>,
 ) -> StatusCode {
@@ -217,7 +216,10 @@ pub(crate) async fn put_auth(
 }
 
 #[instrument(skip(state))]
-pub(crate) async fn get_auth(Path(id): Path<Uuid>, State(state): State<AuthData>) -> StatusCode {
+pub(crate) async fn get_auth(
+    Path(id): Path<AccountId>,
+    State(state): State<AuthData>,
+) -> StatusCode {
     if state.auths.read().await.get(&id).is_some() {
         StatusCode::OK
     } else {

@@ -4,7 +4,7 @@ use anyhow::{anyhow, Context, Result};
 use auth::{AuthData, AuthManager};
 use chrono::{DateTime, Utc};
 use clap::Parser;
-use dt_api::models::{MasterData, Store};
+use dt_api::models::{AccountId, CharacterId, MasterData, Store};
 use figment::{providers::Format, Figment};
 use futures::stream::{FuturesOrdered, StreamExt};
 use futures_util::future;
@@ -12,7 +12,6 @@ use tokio::sync::RwLock;
 use tracing::{error, metadata::LevelFilter};
 use tracing::{info, instrument};
 use tracing_subscriber::{prelude::*, EnvFilter};
-use uuid::Uuid;
 
 mod auth;
 mod server;
@@ -73,16 +72,16 @@ fn init_logging(use_systemd: bool) -> Result<()> {
 struct AccountData {
     last_updated: DateTime<Utc>,
     summary: Arc<RwLock<dt_api::models::Summary>>,
-    marks_store: Arc<RwLock<HashMap<Uuid, dt_api::models::Store>>>,
-    credits_store: Arc<RwLock<HashMap<Uuid, dt_api::models::Store>>>,
+    marks_store: Arc<RwLock<HashMap<CharacterId, dt_api::models::Store>>>,
+    credits_store: Arc<RwLock<HashMap<CharacterId, dt_api::models::Store>>>,
     master_data: Arc<RwLock<dt_api::models::MasterData>>,
 }
 
 impl AccountData {
     fn new(
         summary: dt_api::models::Summary,
-        marks_store: HashMap<Uuid, Store>,
-        credits_store: HashMap<Uuid, Store>,
+        marks_store: HashMap<CharacterId, Store>,
+        credits_store: HashMap<CharacterId, Store>,
         master_data: MasterData,
     ) -> Self {
         Self {
@@ -130,7 +129,7 @@ impl AccountData {
                     None
                 }
             })
-            .collect::<HashMap<Uuid, Store>>();
+            .collect::<HashMap<CharacterId, Store>>();
 
         let credits_store = summary
             .characters
@@ -143,7 +142,7 @@ impl AccountData {
                     None
                 }
             })
-            .collect::<HashMap<Uuid, Store>>();
+            .collect::<HashMap<CharacterId, Store>>();
 
         let master_data = api.get_master_data(auth).await?;
 
@@ -152,28 +151,28 @@ impl AccountData {
 }
 
 #[derive(Debug, Clone, Default)]
-struct Accounts(Arc<RwLock<HashMap<Uuid, AccountData>>>);
+struct Accounts(Arc<RwLock<HashMap<AccountId, AccountData>>>);
 
 impl Accounts {
     #[instrument]
-    async fn get(&self, id: &Uuid) -> Option<AccountData> {
+    async fn get(&self, id: &AccountId) -> Option<AccountData> {
         self.0.read().await.get(id).cloned()
     }
 
     #[instrument]
-    async fn insert(&self, id: Uuid, data: AccountData) {
+    async fn insert(&self, id: AccountId, data: AccountData) {
         self.0.write().await.insert(id, data);
     }
 
     #[instrument]
-    async fn update_timestamp(&self, id: &Uuid) {
+    async fn update_timestamp(&self, id: &AccountId) {
         if let Some(account_data) = self.0.write().await.get_mut(id) {
             account_data.last_updated = Utc::now();
         }
     }
 
     #[instrument]
-    async fn timestamp(&self, id: &Uuid) -> Option<DateTime<Utc>> {
+    async fn timestamp(&self, id: &AccountId) -> Option<DateTime<Utc>> {
         if let Some(account_data) = self.0.read().await.get(id) {
             return Some(account_data.last_updated);
         }

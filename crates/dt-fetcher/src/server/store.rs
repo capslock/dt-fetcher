@@ -7,23 +7,22 @@ use axum::{
     Json,
 };
 use chrono::{DateTime, Utc};
-use dt_api::models::Store;
+use dt_api::models::{AccountId, CharacterId, Store};
 use tracing::{debug, error, info, instrument};
-use uuid::Uuid;
 
 use crate::server::{refresh_summary, AppData};
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct StoreQuery {
-    character_id: Uuid,
+    character_id: CharacterId,
     currency_type: dt_api::models::CurrencyType,
 }
 
 #[instrument(skip(state))]
 async fn refresh_store(
-    account_id: &Uuid,
-    character_id: Uuid,
+    account_id: &AccountId,
+    character_id: CharacterId,
     state: AppData,
     currency_type: dt_api::models::CurrencyType,
 ) -> Result<Json<Store>, StatusCode> {
@@ -95,7 +94,7 @@ async fn refresh_store(
 
 #[instrument(skip(state))]
 pub(crate) async fn store(
-    Path(id): Path<Uuid>,
+    Path(id): Path<AccountId>,
     Query(StoreQuery {
         character_id,
         currency_type,

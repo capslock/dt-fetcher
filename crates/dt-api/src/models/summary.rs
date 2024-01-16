@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt::Display};
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -12,9 +12,19 @@ pub enum Gender {
     Male,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Copy)]
+#[serde(transparent)]
+pub struct CharacterId(pub Uuid);
+
+impl Display for CharacterId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Character {
-    pub id: Uuid,
+    pub id: CharacterId,
     pub name: String,
     pub gender: Gender,
     pub archetype: String,

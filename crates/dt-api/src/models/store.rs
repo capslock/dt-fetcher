@@ -23,10 +23,14 @@ impl std::fmt::Display for CurrencyType {
     }
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Copy)]
+#[serde(transparent)]
+pub struct CatalogId(pub Uuid);
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Catalog {
-    pub id: Uuid,
+    pub id: CatalogId,
     pub name: String,
     pub generation: i32,
     pub layout_ref: Option<String>,
@@ -41,19 +45,27 @@ pub struct Amount {
     pub amount_type: CurrencyType,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Copy)]
+#[serde(transparent)]
+pub struct PriceId(pub Uuid);
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Price {
     pub amount: Amount,
-    pub id: Uuid,
+    pub id: PriceId,
     pub priority: i32,
     pub price_formula: Option<String>,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Copy)]
+#[serde(transparent)]
+pub struct EntitlementId(pub Uuid);
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Entitlement {
-    pub id: Uuid,
+    pub id: EntitlementId,
     pub limit: i32,
     #[serde(rename = "type")]
     pub entitlement_type: String,
@@ -112,12 +124,16 @@ pub enum Overrides {
     None {},
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Copy)]
+#[serde(transparent)]
+pub struct GearId(pub Uuid);
+
 #[skip_serializing_none]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Description {
     pub id: String,
-    pub gear_id: Uuid,
+    pub gear_id: GearId,
     pub rotation: String,
     #[serde(rename = "type")]
     pub description_type: String,
@@ -125,10 +141,14 @@ pub struct Description {
     pub overrides: Overrides,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Copy)]
+#[serde(transparent)]
+pub struct SkuId(pub Uuid);
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Sku {
-    pub id: Uuid,
+    pub id: SkuId,
     pub display_priority: i32,
     pub internal_name: String,
     pub name: String,
@@ -139,10 +159,14 @@ pub struct Sku {
     pub dlc_req: Vec<String>,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Copy)]
+#[serde(transparent)]
+pub struct OfferId(pub Uuid);
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Offer {
-    pub offer_id: Uuid,
+    pub offer_id: OfferId,
     pub sku: Sku,
     pub entitlement: Entitlement,
     pub price: Price,

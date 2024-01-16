@@ -1,14 +1,13 @@
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use models::{Character, CurrencyType};
+use models::{AccountId, Character, CurrencyType};
 use serde::{Deserialize, Serialize};
 use serde_with::{
     formats::Strict, serde_as, skip_serializing_none, DurationSeconds, TimestampMilliSeconds,
 };
 use thiserror::Error;
 use tracing::{debug, info, instrument};
-use uuid::Uuid;
 
 pub mod models;
 
@@ -26,7 +25,7 @@ pub enum Error {
     GetSummary {
         status: reqwest::StatusCode,
         error: serde_json::Value,
-        sub: Uuid,
+        sub: AccountId,
     },
     /// The server returned an error response when getting the store.
     #[error("Failed to get {currency_type} store for {archetype}: {status}: {error}")]
@@ -64,7 +63,7 @@ pub struct Auth {
     #[serde_as(as = "Option<TimestampMilliSeconds<i64, Strict>>")]
     pub refresh_at: Option<DateTime<Utc>>,
     pub refresh_token: String,
-    pub sub: Uuid,
+    pub sub: AccountId,
 }
 
 impl std::fmt::Debug for Auth {
@@ -95,7 +94,7 @@ impl Api {
 
     #[instrument(skip(self))]
     pub async fn get_summary(&self, auth: &Auth) -> Result<models::Summary> {
-        let url = format!("https://bsp-td-prod.atoma.cloud/web/{}/summary", auth.sub);
+        let url = format!("https://bsp-td-prod.atoma.cloud/web/{}/summary", auth.sub.0);
         debug!(url = ?url, "Getting summary");
         let res = self
             .client
@@ -149,7 +148,7 @@ impl Api {
             .query(&[
                 ("accountId", auth.sub.to_string()),
                 ("personal", "true".to_string()),
-                ("characterId", character.id.to_string()),
+                ("characterId", character.id.0.to_string()),
             ])
             .send()
             .await?;

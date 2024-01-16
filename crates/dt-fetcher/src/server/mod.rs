@@ -8,11 +8,10 @@ use axum::{
     routing::{get, put},
     Json, Router,
 };
-use dt_api::models::{MasterData, Summary};
+use dt_api::models::{AccountId, MasterData, Summary};
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::{error, Span};
 use tracing::{info, instrument};
-use uuid::Uuid;
 
 use crate::auth::{get_auth, put_auth, AuthData};
 
@@ -100,7 +99,7 @@ const SUMMARY_REFRESH_INTERVAL_MINS: i64 = 60;
 
 #[instrument(skip(state))]
 async fn summary(
-    Path(id): Path<Uuid>,
+    Path(id): Path<AccountId>,
     State(state): State<AppData>,
 ) -> Result<Json<Summary>, StatusCode> {
     if let Some(account_data) = state.accounts.get(&id).await {
@@ -131,7 +130,10 @@ async fn summary_single(State(state): State<AppData>) -> Result<Json<Summary>, S
 }
 
 #[instrument(skip(state))]
-async fn refresh_summary(account_id: &Uuid, state: AppData) -> Result<Json<Summary>, StatusCode> {
+async fn refresh_summary(
+    account_id: &AccountId,
+    state: AppData,
+) -> Result<Json<Summary>, StatusCode> {
     let api = &state.api;
     let account_data = if let Some(account_data) = state.accounts.get(account_id).await {
         account_data
@@ -158,7 +160,7 @@ async fn refresh_summary(account_id: &Uuid, state: AppData) -> Result<Json<Summa
 
 #[instrument(skip(state))]
 async fn master_data(
-    Path(id): Path<Uuid>,
+    Path(id): Path<AccountId>,
     State(state): State<AppData>,
 ) -> Result<Json<MasterData>, StatusCode> {
     if let Some(account_data) = state.accounts.get(&id).await {
