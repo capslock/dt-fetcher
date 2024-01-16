@@ -403,7 +403,7 @@ dependencies = [
 
 [[package]]
 name = "dt-api"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "reqwest",
@@ -417,7 +417,7 @@ dependencies = [
 
 [[package]]
 name = "dt-fetcher"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "axum",
