@@ -1,20 +1,20 @@
-use std::{collections::HashMap, net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{net::SocketAddr, path::PathBuf};
 
 use anyhow::{anyhow, Context, Result};
-use auth::{AuthData, AuthManager};
-use chrono::{DateTime, Utc};
 use clap::Parser;
-use dt_api::models::{AccountId, CharacterId, MasterData, Store};
 use figment::{providers::Format, Figment};
-use futures::stream::{FuturesOrdered, StreamExt};
 use futures_util::future;
-use tokio::sync::RwLock;
-use tracing::{error, metadata::LevelFilter};
-use tracing::{info, instrument};
+use tracing::info;
+use tracing::metadata::LevelFilter;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
+mod account;
 mod auth;
 mod server;
+
+use auth::{AuthData, AuthManager};
+
+use crate::account::Accounts;
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -66,118 +66,6 @@ fn init_logging(use_systemd: bool) -> Result<()> {
     registry.with(filter).with(layer).init();
 
     Ok(())
-}
-
-#[derive(Debug, Clone)]
-struct AccountData {
-    last_updated: DateTime<Utc>,
-    summary: Arc<RwLock<dt_api::models::Summary>>,
-    marks_store: Arc<RwLock<HashMap<CharacterId, dt_api::models::Store>>>,
-    credits_store: Arc<RwLock<HashMap<CharacterId, dt_api::models::Store>>>,
-    master_data: Arc<RwLock<dt_api::models::MasterData>>,
-}
-
-impl AccountData {
-    fn new(
-        summary: dt_api::models::Summary,
-        marks_store: HashMap<CharacterId, Store>,
-        credits_store: HashMap<CharacterId, Store>,
-        master_data: MasterData,
-    ) -> Self {
-        Self {
-            last_updated: Utc::now(),
-            summary: Arc::new(RwLock::new(summary)),
-            marks_store: Arc::new(RwLock::new(marks_store)),
-            credits_store: Arc::new(RwLock::new(credits_store)),
-            master_data: Arc::new(RwLock::new(master_data)),
-        }
-    }
-
-    #[instrument]
-    async fn fetch(api: &dt_api::Api, auth: &dt_api::Auth) -> Result<AccountData> {
-        let summary = api.get_summary(auth).await?;
-
-        info!(
-            "Fetching stores for {} characters",
-            summary.characters.len()
-        );
-
-        let marks_store = summary
-            .characters
-            .iter()
-            .map(|c| api.get_store(auth, dt_api::models::CurrencyType::Marks, c))
-            .collect::<FuturesOrdered<_>>()
-            .collect::<Vec<_>>();
-
-        let credits_store = summary
-            .characters
-            .iter()
-            .map(|c| api.get_store(auth, dt_api::models::CurrencyType::Credits, c))
-            .collect::<FuturesOrdered<_>>()
-            .collect::<Vec<_>>();
-
-        let (marks_store, credits_store) = tokio::join!(marks_store, credits_store);
-
-        let marks_store = summary
-            .characters
-            .iter()
-            .zip(marks_store.into_iter())
-            .filter_map(|(c, s)| match s {
-                Ok(s) => Some((c.id, s)),
-                Err(e) => {
-                    error!("Failed to get marks store: {}", e);
-                    None
-                }
-            })
-            .collect::<HashMap<CharacterId, Store>>();
-
-        let credits_store = summary
-            .characters
-            .iter()
-            .zip(credits_store.into_iter())
-            .filter_map(|(c, s)| match s {
-                Ok(s) => Some((c.id, s)),
-                Err(e) => {
-                    error!("Failed to get credits store: {}", e);
-                    None
-                }
-            })
-            .collect::<HashMap<CharacterId, Store>>();
-
-        let master_data = api.get_master_data(auth).await?;
-
-        Ok(Self::new(summary, marks_store, credits_store, master_data))
-    }
-}
-
-#[derive(Debug, Clone, Default)]
-struct Accounts(Arc<RwLock<HashMap<AccountId, AccountData>>>);
-
-impl Accounts {
-    #[instrument]
-    async fn get(&self, id: &AccountId) -> Option<AccountData> {
-        self.0.read().await.get(id).cloned()
-    }
-
-    #[instrument]
-    async fn insert(&self, id: AccountId, data: AccountData) {
-        self.0.write().await.insert(id, data);
-    }
-
-    #[instrument]
-    async fn update_timestamp(&self, id: &AccountId) {
-        if let Some(account_data) = self.0.write().await.get_mut(id) {
-            account_data.last_updated = Utc::now();
-        }
-    }
-
-    #[instrument]
-    async fn timestamp(&self, id: &AccountId) -> Option<DateTime<Utc>> {
-        if let Some(account_data) = self.0.read().await.get(id) {
-            return Some(account_data.last_updated);
-        }
-        None
-    }
 }
 
 #[tokio::main]

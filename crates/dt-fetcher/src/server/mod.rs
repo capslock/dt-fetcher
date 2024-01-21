@@ -21,7 +21,7 @@ use store::{store, store_single};
 #[derive(Debug, Clone)]
 struct AppData {
     api: dt_api::Api,
-    accounts: crate::Accounts,
+    accounts: crate::account::Accounts,
     auth_data: AuthData,
 }
 
@@ -37,7 +37,7 @@ impl FromRef<AppData> for dt_api::Api {
     }
 }
 
-impl FromRef<AppData> for crate::Accounts {
+impl FromRef<AppData> for crate::account::Accounts {
     fn from_ref(state: &AppData) -> Self {
         state.accounts.clone()
     }
@@ -51,7 +51,7 @@ pub struct Server {
 impl Server {
     pub fn new(
         api: dt_api::Api,
-        accounts: crate::Accounts,
+        accounts: crate::account::Accounts,
         auth_data: crate::AuthData,
         listen_addr: SocketAddr,
     ) -> Self {

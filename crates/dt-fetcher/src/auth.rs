@@ -19,7 +19,7 @@ use tokio::sync::{
 };
 use tracing::{error, info, instrument, warn};
 
-use crate::{AccountData, Accounts};
+use crate::account::{AccountData, Accounts};
 
 const REFRESH_BUFFER: Duration = Duration::from_secs(300);
 
