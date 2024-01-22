@@ -14,7 +14,11 @@ mod server;
 
 use auth::{AuthData, AuthManager};
 
-use crate::{account::Accounts, auth::InMemoryAuthStorage};
+use crate::{
+    account::Accounts,
+    auth::SledDbAuthStorage,
+    auth::{ErasedAuthStorage, InMemoryAuthStorage},
+};
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -34,6 +38,9 @@ struct Args {
     /// Output logs directly to systemd
     #[arg(long, default_value = "false")]
     log_to_systemd: bool,
+    /// Path to database
+    #[arg(long, value_parser = clap::value_parser!(PathBuf))]
+    db_path: Option<PathBuf>,
 }
 
 fn init_logging(use_systemd: bool) -> Result<()> {
@@ -78,7 +85,19 @@ async fn main() -> Result<()> {
 
     let accounts = Accounts::default();
 
-    let auth_manager = AuthManager::<InMemoryAuthStorage>::new(api.clone(), accounts.clone());
+    let auth_manager = if let Some(db_path) = args.db_path {
+        AuthManager::<ErasedAuthStorage>::new_with_storage(
+            api.clone(),
+            accounts.clone(),
+            SledDbAuthStorage::new(db_path)?.into(),
+        )
+    } else {
+        AuthManager::<ErasedAuthStorage>::new_with_storage(
+            api.clone(),
+            accounts.clone(),
+            InMemoryAuthStorage::default().into(),
+        )
+    };
 
     if let Some(auth) = args.auth {
         let auth = Figment::new()

@@ -56,7 +56,12 @@ async fn refresh_store<T: AuthStorage>(
                 }
             }
         };
-    let auth_data = if let Some(auth_data) = state.auth_data.get(*account_id).await {
+    let auth_data = if let Some(auth_data) = state
+        .auth_data
+        .get(*account_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    {
         auth_data
     } else {
         error!(sid = ?account_id, "Failed to find auth data");
@@ -136,7 +141,11 @@ pub(crate) async fn store_single<T: AuthStorage>(
     query: Query<StoreQuery>,
     State(state): State<AppData<T>>,
 ) -> Result<Json<Store>, StatusCode> {
-    let account = state.auth_data.get_single().await;
+    let account = state
+        .auth_data
+        .get_single()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     if let Some(account) = account {
         store(Path(account), query, State(state)).await
     } else {

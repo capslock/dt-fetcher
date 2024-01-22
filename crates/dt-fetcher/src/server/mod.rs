@@ -122,7 +122,11 @@ async fn summary<T: AuthStorage>(
 async fn summary_single<T: AuthStorage>(
     State(state): State<AppData<T>>,
 ) -> Result<Json<Summary>, StatusCode> {
-    let account = state.auth_data.get_single().await;
+    let account = state
+        .auth_data
+        .get_single()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     if let Some(account) = account {
         summary(Path(account), State(state)).await
     } else {
@@ -143,7 +147,12 @@ async fn refresh_summary<T: AuthStorage>(
         error!(sid = ?account_id, "Failed to find account data");
         return Err(StatusCode::NOT_FOUND);
     };
-    if let Some(auth_data) = state.auth_data.get(*account_id).await {
+    if let Some(auth_data) = state
+        .auth_data
+        .get(*account_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    {
         let new_summary = api.get_summary(&auth_data).await;
         if let Ok(new_summary) = new_summary {
             let mut summary = account_data.summary.write().await;
@@ -178,7 +187,11 @@ async fn master_data<T: AuthStorage>(
 async fn master_data_single<T: AuthStorage>(
     State(state): State<AppData<T>>,
 ) -> Result<Json<MasterData>, StatusCode> {
-    let account = state.auth_data.get_single().await;
+    let account = state
+        .auth_data
+        .get_single()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     if let Some(account) = account {
         master_data(Path(account), State(state)).await
     } else {

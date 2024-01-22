@@ -20,7 +20,7 @@ mod endpoints;
 pub(crate) use endpoints::{get_auth, put_auth};
 
 mod storage;
-pub(crate) use storage::{AuthStorage, InMemoryAuthStorage};
+pub(crate) use storage::{AuthStorage, ErasedAuthStorage, InMemoryAuthStorage, SledDbAuthStorage};
 
 const REFRESH_BUFFER: Duration = Duration::from_secs(300);
 
@@ -67,7 +67,7 @@ pub(crate) struct AuthManager<T: AuthStorage> {
     rx: Receiver<AuthCommand>,
 }
 
-impl<T: AuthStorage> AuthManager<T> {
+impl<T: AuthStorage + Default> AuthManager<T> {
     #[instrument(skip_all)]
     pub fn new(api: dt_api::Api, accounts: Accounts) -> Self {
         let (tx, rx) = channel(100);
@@ -76,6 +76,19 @@ impl<T: AuthStorage> AuthManager<T> {
                 auths: Default::default(),
                 tx,
             },
+            rx,
+            api,
+            accounts,
+        }
+    }
+}
+
+impl<T: AuthStorage> AuthManager<T> {
+    #[instrument(skip_all)]
+    pub fn new_with_storage(api: dt_api::Api, accounts: Accounts, storage: T) -> Self {
+        let (tx, rx) = channel(100);
+        AuthManager {
+            auth_data: AuthData { auths: storage, tx },
             rx,
             api,
             accounts,
@@ -114,7 +127,7 @@ impl<T: AuthStorage> AuthManager<T> {
                 command = self.rx.recv() => match command {
                     Some(AuthCommand::NewAuth(auth)) => {
                         info!(auth = ?auth, "Adding new auth");
-                        if self.auth_data.contains(&auth.sub).await {
+                        if self.auth_data.contains(&auth.sub).await? {
                             error!(auth = ?auth, "Auth already exists");
                             continue;
                         }
@@ -125,7 +138,9 @@ impl<T: AuthStorage> AuthManager<T> {
                         } else {
                             error!(auth = ?auth, "Failed to fetch account data");
                         }
-                        self.auth_data.insert(auth.sub, auth).await;
+                        if let Err(e) = self.auth_data.insert(auth.sub, auth).await {
+                            error!(error = %e, "Failed to insert auth");
+                        }
                     }
                     Some(AuthCommand::Shutdown) => {
                         info!("Shutting down auth manager");
@@ -151,7 +166,7 @@ impl<T: AuthStorage> AuthManager<T> {
             if let Some(auth) = self
                 .auth_data
                 .get(refresh_auth.id)
-                .await
+                .await?
                 .as_deref()
                 .cloned()
             {
@@ -164,7 +179,10 @@ impl<T: AuthStorage> AuthManager<T> {
                 let refresh_auth = RefreshAuth::new(&auth);
                 auth.refresh_at = Some(refresh_auth.refresh_at);
                 info!(auth = ?auth, "Auth refreshed");
-                self.auth_data.insert(refresh_auth.id, auth).await;
+                if let Err(e) = self.auth_data.insert(refresh_auth.id, auth).await {
+                    error!(error = %e, "Failed to insert auth, removing");
+                    return Err(e);
+                }
                 auths.push(refresh_auth);
             } else {
                 info!(sub = ?refresh_auth.id, "Auth not found, removing");
@@ -200,20 +218,20 @@ impl<T: AuthStorage> AuthData<T> {
     pub fn get(
         &self,
         id: AccountId,
-    ) -> impl Future<Output = Option<impl Deref<Target = Auth> + '_>> {
+    ) -> impl Future<Output = Result<Option<impl Deref<Target = Auth> + '_>>> {
         self.auths.get(id)
     }
 
-    pub async fn get_single(&self) -> Option<AccountId> {
+    pub async fn get_single(&self) -> Result<Option<AccountId>> {
         self.auths.get_single().await
     }
 
     #[instrument(skip(self))]
-    pub async fn contains(&self, id: &AccountId) -> bool {
+    pub async fn contains(&self, id: &AccountId) -> Result<bool> {
         self.auths.contains(id).await
     }
 
-    async fn insert(&self, id: AccountId, auth: Auth) {
+    async fn insert(&self, id: AccountId, auth: Auth) -> Result<()> {
         self.auths.insert(id, auth).await
     }
 }

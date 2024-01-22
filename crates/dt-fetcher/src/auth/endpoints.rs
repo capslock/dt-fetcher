@@ -14,8 +14,16 @@ pub(crate) async fn put_auth<T: AuthStorage>(
     State(state): State<AuthData<T>>,
     Json(auth): Json<dt_api::Auth>,
 ) -> StatusCode {
-    if state.auths.contains(&id).await {
+    let result = state
+        .auths
+        .contains(&id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR);
+    if let Ok(true) = result {
         return StatusCode::OK;
+    } else if let Err(e) = result {
+        error!("Failed to check if auth exists: {}", e);
+        return StatusCode::INTERNAL_SERVER_ERROR;
     } else if let Err(e) = state.add_auth(auth).await {
         error!("Failed to add auth: {}", e);
         return StatusCode::INTERNAL_SERVER_ERROR;
@@ -28,8 +36,16 @@ pub(crate) async fn get_auth<T: AuthStorage>(
     Path(id): Path<AccountId>,
     State(state): State<AuthData<T>>,
 ) -> StatusCode {
-    if state.auths.contains(&id).await {
+    let result = state
+        .auths
+        .contains(&id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR);
+    if let Ok(true) = result {
         StatusCode::OK
+    } else if let Err(e) = result {
+        error!("Failed to check if auth exists: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
     } else {
         StatusCode::NOT_FOUND
     }
