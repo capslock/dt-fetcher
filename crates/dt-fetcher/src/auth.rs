@@ -1,5 +1,6 @@
 use std::{
     collections::{BinaryHeap, HashMap},
+    ops::Deref,
     sync::Arc,
     time::{Duration, SystemTime},
 };
@@ -12,7 +13,10 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use dt_api::{models::AccountId, Auth};
-use futures_util::future::{self, Either};
+use futures_util::{
+    future::{self, Either},
+    Future,
+};
 use tokio::sync::{
     mpsc::{channel, Receiver, Sender},
     RwLock,
@@ -56,27 +60,40 @@ pub(crate) enum AuthCommand {
     Shutdown,
 }
 
+pub trait AuthStorage: Clone + Default + Send + Sync + 'static {
+    fn get(
+        &self,
+        id: AccountId,
+    ) -> impl Future<Output = Option<impl Deref<Target = Auth> + Send>> + Send;
+
+    fn get_single(&self) -> impl Future<Output = Option<AccountId>> + Send;
+
+    fn contains(&self, id: &AccountId) -> impl Future<Output = bool> + Send;
+
+    fn insert(&self, id: AccountId, auth: Auth) -> impl Future<Output = ()> + Send;
+}
+
 #[derive(Debug, Clone)]
-pub(crate) struct AuthData {
-    auths: Arc<RwLock<HashMap<AccountId, Auth>>>,
+pub(crate) struct AuthData<A: AuthStorage> {
+    auths: A,
     tx: Sender<AuthCommand>,
 }
 
 #[derive(Debug)]
-pub(crate) struct AuthManager {
+pub(crate) struct AuthManager<T: AuthStorage> {
     api: dt_api::Api,
-    auth_data: AuthData,
+    auth_data: AuthData<T>,
     accounts: Accounts,
     rx: Receiver<AuthCommand>,
 }
 
-impl AuthManager {
+impl<T: AuthStorage> AuthManager<T> {
     #[instrument(skip_all)]
     pub fn new(api: dt_api::Api, accounts: Accounts) -> Self {
         let (tx, rx) = channel(100);
         AuthManager {
             auth_data: AuthData {
-                auths: Arc::new(RwLock::new(HashMap::new())),
+                auths: Default::default(),
                 tx,
             },
             rx,
@@ -86,7 +103,7 @@ impl AuthManager {
     }
 
     #[instrument(skip_all)]
-    pub fn auth_data(&self) -> AuthData {
+    pub fn auth_data(&self) -> AuthData<T> {
         self.auth_data.clone()
     }
 
@@ -151,9 +168,15 @@ impl AuthManager {
     #[instrument(skip_all)]
     async fn refresh_auth(&mut self, auths: &mut BinaryHeap<RefreshAuth>) -> Result<()> {
         if let Some(mut refresh_auth) = auths.pop() {
-            if let Some(mut auth) = self.auth_data.get_mut(&refresh_auth.id).await {
+            if let Some(auth) = self
+                .auth_data
+                .get(refresh_auth.id)
+                .await
+                .as_deref()
+                .cloned()
+            {
                 info!(sub = ?refresh_auth.id, "Refreshing auth");
-                *auth = self
+                let mut auth = self
                     .api
                     .refresh_auth(&auth)
                     .await
@@ -161,8 +184,9 @@ impl AuthManager {
                 refresh_auth.refresh_at = DateTime::from(SystemTime::now())
                     + auth.expires_in.saturating_sub(REFRESH_BUFFER);
                 auth.refresh_at = Some(refresh_auth.refresh_at);
+                info!(auth = ?auth, "Auth refreshed");
+                self.auth_data.insert(refresh_auth.id, auth).await;
                 auths.push(refresh_auth);
-                info!(auth = ?*auth, "Auth refreshed");
             } else {
                 info!(sub = ?refresh_auth.id, "Auth not found, removing");
             }
@@ -171,7 +195,34 @@ impl AuthManager {
     }
 }
 
-impl AuthData {
+#[derive(Debug, Clone, Default)]
+pub struct InMemoryAuthStorage {
+    auths: Arc<RwLock<HashMap<AccountId, Auth>>>,
+}
+
+impl AuthStorage for InMemoryAuthStorage {
+    #[instrument(skip(self))]
+    async fn get<'a>(&'a self, id: AccountId) -> Option<impl Deref<Target = Auth>> {
+        tokio::sync::RwLockReadGuard::try_map(self.auths.read().await, |auths| auths.get(&id)).ok()
+    }
+
+    #[instrument(skip(self))]
+    async fn get_single(&self) -> Option<AccountId> {
+        self.auths.read().await.keys().next().copied()
+    }
+
+    #[instrument(skip(self))]
+    async fn contains(&self, id: &AccountId) -> bool {
+        self.auths.read().await.contains_key(id)
+    }
+
+    #[instrument(skip(self))]
+    async fn insert(&self, id: AccountId, auth: Auth) {
+        self.auths.write().await.insert(id, auth);
+    }
+}
+
+impl<T: AuthStorage> AuthData<T> {
     #[instrument(skip(self))]
     pub async fn add_auth(&self, auth: Auth) -> Result<()> {
         self.tx
@@ -181,48 +232,41 @@ impl AuthData {
     }
 
     #[instrument(skip(self))]
-    pub async fn get(&self, id: &AccountId) -> Option<tokio::sync::RwLockReadGuard<'_, Auth>> {
-        tokio::sync::RwLockReadGuard::try_map(self.auths.read().await, |auths| auths.get(id)).ok()
-    }
-
-    #[instrument(skip(self))]
-    pub async fn get_mut(
-        &mut self,
-        id: &AccountId,
-    ) -> Option<tokio::sync::RwLockMappedWriteGuard<'_, Auth>> {
-        tokio::sync::RwLockWriteGuard::try_map(self.auths.write().await, |auths| auths.get_mut(id))
-            .ok()
-    }
-
-    pub async fn get_single(&self) -> Option<AccountId> {
-        self.auths.read().await.keys().next().copied()
-    }
-
-    #[instrument(skip(self))]
-    pub async fn contains(&self, id: &AccountId) -> bool {
-        self.auths.read().await.contains_key(id)
-    }
-
-    async fn insert(&self, id: AccountId, auth: Auth) {
-        self.auths.write().await.insert(id, auth);
-    }
-
-    #[instrument(skip(self))]
     pub async fn shutdown(&self) -> Result<()> {
         self.tx
             .send(AuthCommand::Shutdown)
             .await
             .context("Failed to send shutdown")
     }
+
+    pub fn get(
+        &self,
+        id: AccountId,
+    ) -> impl Future<Output = Option<impl Deref<Target = Auth> + '_>> {
+        self.auths.get(id)
+    }
+
+    pub async fn get_single(&self) -> Option<AccountId> {
+        self.auths.get_single().await
+    }
+
+    #[instrument(skip(self))]
+    pub async fn contains(&self, id: &AccountId) -> bool {
+        self.auths.contains(id).await
+    }
+
+    async fn insert(&self, id: AccountId, auth: Auth) {
+        self.auths.insert(id, auth).await
+    }
 }
 
 #[instrument(skip(state))]
-pub(crate) async fn put_auth(
+pub(crate) async fn put_auth<T: AuthStorage>(
     Path(id): Path<AccountId>,
-    State(state): State<AuthData>,
+    State(state): State<AuthData<T>>,
     Json(auth): Json<dt_api::Auth>,
 ) -> StatusCode {
-    if state.auths.read().await.get(&id).is_some() {
+    if state.auths.contains(&id).await {
         return StatusCode::OK;
     } else if let Err(e) = state.add_auth(auth).await {
         error!("Failed to add auth: {}", e);
@@ -232,11 +276,11 @@ pub(crate) async fn put_auth(
 }
 
 #[instrument(skip(state))]
-pub(crate) async fn get_auth(
+pub(crate) async fn get_auth<T: AuthStorage>(
     Path(id): Path<AccountId>,
-    State(state): State<AuthData>,
+    State(state): State<AuthData<T>>,
 ) -> StatusCode {
-    if state.auths.read().await.get(&id).is_some() {
+    if state.auths.contains(&id).await {
         StatusCode::OK
     } else {
         StatusCode::NOT_FOUND

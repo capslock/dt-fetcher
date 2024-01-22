@@ -14,7 +14,7 @@ mod server;
 
 use auth::{AuthData, AuthManager};
 
-use crate::account::Accounts;
+use crate::{account::Accounts, auth::InMemoryAuthStorage};
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -78,7 +78,7 @@ async fn main() -> Result<()> {
 
     let accounts = Accounts::default();
 
-    let auth_manager = AuthManager::new(api.clone(), accounts.clone());
+    let auth_manager = AuthManager::<InMemoryAuthStorage>::new(api.clone(), accounts.clone());
 
     if let Some(auth) = args.auth {
         let auth = Figment::new()

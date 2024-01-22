@@ -10,7 +10,10 @@ use chrono::{DateTime, Utc};
 use dt_api::models::{AccountId, CharacterId, Store};
 use tracing::{debug, error, info, instrument};
 
-use crate::server::{refresh_summary, AppData};
+use crate::{
+    auth::AuthStorage,
+    server::{refresh_summary, AppData},
+};
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -20,10 +23,10 @@ pub(crate) struct StoreQuery {
 }
 
 #[instrument(skip(state))]
-async fn refresh_store(
+async fn refresh_store<T: AuthStorage>(
     account_id: &AccountId,
     character_id: CharacterId,
-    state: AppData,
+    state: AppData<T>,
     currency_type: dt_api::models::CurrencyType,
 ) -> Result<Json<Store>, StatusCode> {
     let api = &state.api;
@@ -53,7 +56,7 @@ async fn refresh_store(
                 }
             }
         };
-    let auth_data = if let Some(auth_data) = state.auth_data.get(account_id).await {
+    let auth_data = if let Some(auth_data) = state.auth_data.get(*account_id).await {
         auth_data
     } else {
         error!(sid = ?account_id, "Failed to find auth data");
@@ -93,13 +96,13 @@ async fn refresh_store(
 }
 
 #[instrument(skip(state))]
-pub(crate) async fn store(
+pub(crate) async fn store<T: AuthStorage>(
     Path(id): Path<AccountId>,
     Query(StoreQuery {
         character_id,
         currency_type,
     }): Query<StoreQuery>,
-    State(state): State<AppData>,
+    State(state): State<AppData<T>>,
 ) -> Result<Json<Store>, StatusCode> {
     if let Some(account_data) = state.accounts.get(&id).await {
         let currency_store = match currency_type {
@@ -129,9 +132,9 @@ pub(crate) async fn store(
 }
 
 #[instrument(skip(state))]
-pub(crate) async fn store_single(
+pub(crate) async fn store_single<T: AuthStorage>(
     query: Query<StoreQuery>,
-    State(state): State<AppData>,
+    State(state): State<AppData<T>>,
 ) -> Result<Json<Store>, StatusCode> {
     let account = state.auth_data.get_single().await;
     if let Some(account) = account {

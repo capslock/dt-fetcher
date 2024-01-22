@@ -13,32 +13,32 @@ use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::{error, Span};
 use tracing::{info, instrument};
 
-use crate::auth::{get_auth, put_auth, AuthData};
+use crate::auth::{get_auth, put_auth, AuthData, AuthStorage};
 
 mod store;
 use store::{store, store_single};
 
 #[derive(Debug, Clone)]
-struct AppData {
+struct AppData<T: AuthStorage> {
     api: dt_api::Api,
     accounts: crate::account::Accounts,
-    auth_data: AuthData,
+    auth_data: AuthData<T>,
 }
 
-impl FromRef<AppData> for AuthData {
-    fn from_ref(state: &AppData) -> Self {
+impl<T: AuthStorage> FromRef<AppData<T>> for AuthData<T> {
+    fn from_ref(state: &AppData<T>) -> Self {
         state.auth_data.clone()
     }
 }
 
-impl FromRef<AppData> for dt_api::Api {
-    fn from_ref(state: &AppData) -> Self {
+impl<T: AuthStorage> FromRef<AppData<T>> for dt_api::Api {
+    fn from_ref(state: &AppData<T>) -> Self {
         state.api.clone()
     }
 }
 
-impl FromRef<AppData> for crate::account::Accounts {
-    fn from_ref(state: &AppData) -> Self {
+impl<T: AuthStorage> FromRef<AppData<T>> for crate::account::Accounts {
+    fn from_ref(state: &AppData<T>) -> Self {
         state.accounts.clone()
     }
 }
@@ -49,10 +49,10 @@ pub struct Server {
 }
 
 impl Server {
-    pub fn new(
+    pub fn new<T: AuthStorage>(
         api: dt_api::Api,
         accounts: crate::account::Accounts,
-        auth_data: crate::AuthData,
+        auth_data: crate::AuthData<T>,
         listen_addr: SocketAddr,
     ) -> Self {
         let app_data = AppData {
@@ -98,9 +98,9 @@ impl Server {
 const SUMMARY_REFRESH_INTERVAL_MINS: i64 = 60;
 
 #[instrument(skip(state))]
-async fn summary(
+async fn summary<T: AuthStorage>(
     Path(id): Path<AccountId>,
-    State(state): State<AppData>,
+    State(state): State<AppData<T>>,
 ) -> Result<Json<Summary>, StatusCode> {
     if let Some(account_data) = state.accounts.get(&id).await {
         if account_data.last_updated
@@ -119,7 +119,9 @@ async fn summary(
 }
 
 #[instrument(skip(state))]
-async fn summary_single(State(state): State<AppData>) -> Result<Json<Summary>, StatusCode> {
+async fn summary_single<T: AuthStorage>(
+    State(state): State<AppData<T>>,
+) -> Result<Json<Summary>, StatusCode> {
     let account = state.auth_data.get_single().await;
     if let Some(account) = account {
         summary(Path(account), State(state)).await
@@ -130,9 +132,9 @@ async fn summary_single(State(state): State<AppData>) -> Result<Json<Summary>, S
 }
 
 #[instrument(skip(state))]
-async fn refresh_summary(
+async fn refresh_summary<T: AuthStorage>(
     account_id: &AccountId,
-    state: AppData,
+    state: AppData<T>,
 ) -> Result<Json<Summary>, StatusCode> {
     let api = &state.api;
     let account_data = if let Some(account_data) = state.accounts.get(account_id).await {
@@ -141,7 +143,7 @@ async fn refresh_summary(
         error!(sid = ?account_id, "Failed to find account data");
         return Err(StatusCode::NOT_FOUND);
     };
-    if let Some(auth_data) = state.auth_data.get(account_id).await {
+    if let Some(auth_data) = state.auth_data.get(*account_id).await {
         let new_summary = api.get_summary(&auth_data).await;
         if let Ok(new_summary) = new_summary {
             let mut summary = account_data.summary.write().await;
@@ -159,9 +161,9 @@ async fn refresh_summary(
 }
 
 #[instrument(skip(state))]
-async fn master_data(
+async fn master_data<T: AuthStorage>(
     Path(id): Path<AccountId>,
-    State(state): State<AppData>,
+    State(state): State<AppData<T>>,
 ) -> Result<Json<MasterData>, StatusCode> {
     if let Some(account_data) = state.accounts.get(&id).await {
         info!("Returning cached master data");
@@ -173,7 +175,9 @@ async fn master_data(
 }
 
 #[instrument(skip(state))]
-async fn master_data_single(State(state): State<AppData>) -> Result<Json<MasterData>, StatusCode> {
+async fn master_data_single<T: AuthStorage>(
+    State(state): State<AppData<T>>,
+) -> Result<Json<MasterData>, StatusCode> {
     let account = state.auth_data.get_single().await;
     if let Some(account) = account {
         master_data(Path(account), State(state)).await
