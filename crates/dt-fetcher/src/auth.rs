@@ -117,7 +117,7 @@ impl AuthManager {
                 command = self.rx.recv() => match command {
                     Some(AuthCommand::NewAuth(auth)) => {
                         info!(auth = ?auth, "Adding new auth");
-                        if self.auth_data.auths.read().await.get(&auth.sub).is_some() {
+                        if self.auth_data.contains(&auth.sub).await {
                             error!(auth = ?auth, "Auth already exists");
                             continue;
                         }
@@ -128,7 +128,7 @@ impl AuthManager {
                         } else {
                             error!(auth = ?auth, "Failed to fetch account data");
                         }
-                        self.auth_data.auths.write().await.insert(auth.sub, auth);
+                        self.auth_data.insert(auth.sub, auth).await;
                     }
                     Some(AuthCommand::Shutdown) => {
                         info!("Shutting down auth manager");
@@ -151,18 +151,16 @@ impl AuthManager {
     #[instrument(skip_all)]
     async fn refresh_auth(&mut self, auths: &mut BinaryHeap<RefreshAuth>) -> Result<()> {
         if let Some(mut refresh_auth) = auths.pop() {
-            if let Some(auth) = self.auth_data.auths.write().await.get_mut(&refresh_auth.id) {
+            if let Some(mut auth) = self.auth_data.get_mut(&refresh_auth.id).await {
                 info!(sub = ?refresh_auth.id, "Refreshing auth");
                 *auth = self
                     .api
-                    .refresh_auth(&*auth)
+                    .refresh_auth(&auth)
                     .await
                     .context("failed to refresh auth")?;
-                auth.refresh_at = Some(
-                    DateTime::from(SystemTime::now())
-                        + auth.expires_in.saturating_sub(REFRESH_BUFFER),
-                );
-                refresh_auth.refresh_at = auth.refresh_at.expect("auth refresh_at is None");
+                refresh_auth.refresh_at = DateTime::from(SystemTime::now())
+                    + auth.expires_in.saturating_sub(REFRESH_BUFFER);
+                auth.refresh_at = Some(refresh_auth.refresh_at);
                 auths.push(refresh_auth);
                 info!(auth = ?*auth, "Auth refreshed");
             } else {
@@ -183,12 +181,30 @@ impl AuthData {
     }
 
     #[instrument(skip(self))]
-    pub async fn get(&self, id: &AccountId) -> Option<Auth> {
-        self.auths.read().await.get(id).cloned()
+    pub async fn get(&self, id: &AccountId) -> Option<tokio::sync::RwLockReadGuard<'_, Auth>> {
+        tokio::sync::RwLockReadGuard::try_map(self.auths.read().await, |auths| auths.get(id)).ok()
     }
 
-    pub async fn get_single(&self) -> Option<Auth> {
-        self.auths.read().await.values().next().cloned()
+    #[instrument(skip(self))]
+    pub async fn get_mut(
+        &mut self,
+        id: &AccountId,
+    ) -> Option<tokio::sync::RwLockMappedWriteGuard<'_, Auth>> {
+        tokio::sync::RwLockWriteGuard::try_map(self.auths.write().await, |auths| auths.get_mut(id))
+            .ok()
+    }
+
+    pub async fn get_single(&self) -> Option<AccountId> {
+        self.auths.read().await.keys().next().copied()
+    }
+
+    #[instrument(skip(self))]
+    pub async fn contains(&self, id: &AccountId) -> bool {
+        self.auths.read().await.contains_key(id)
+    }
+
+    async fn insert(&self, id: AccountId, auth: Auth) {
+        self.auths.write().await.insert(id, auth);
     }
 
     #[instrument(skip(self))]

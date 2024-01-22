@@ -120,9 +120,9 @@ async fn summary(
 
 #[instrument(skip(state))]
 async fn summary_single(State(state): State<AppData>) -> Result<Json<Summary>, StatusCode> {
-    let auth = state.auth_data.get_single().await;
-    if let Some(auth) = auth {
-        summary(Path(auth.sub), State(state)).await
+    let account = state.auth_data.get_single().await;
+    if let Some(account) = account {
+        summary(Path(account), State(state)).await
     } else {
         error!("Failed to find account data");
         Err(StatusCode::NOT_FOUND)
@@ -174,9 +174,9 @@ async fn master_data(
 
 #[instrument(skip(state))]
 async fn master_data_single(State(state): State<AppData>) -> Result<Json<MasterData>, StatusCode> {
-    let auth = state.auth_data.get_single().await;
-    if let Some(auth) = auth {
-        master_data(Path(auth.sub), State(state)).await
+    let account = state.auth_data.get_single().await;
+    if let Some(account) = account {
+        master_data(Path(account), State(state)).await
     } else {
         error!("Failed to find account data");
         Err(StatusCode::NOT_FOUND)

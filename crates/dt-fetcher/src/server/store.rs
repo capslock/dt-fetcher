@@ -133,9 +133,9 @@ pub(crate) async fn store_single(
     query: Query<StoreQuery>,
     State(state): State<AppData>,
 ) -> Result<Json<Store>, StatusCode> {
-    let auth = state.auth_data.get_single().await;
-    if let Some(auth) = auth {
-        store(Path(auth.sub), query, State(state)).await
+    let account = state.auth_data.get_single().await;
+    if let Some(account) = account {
+        store(Path(account), query, State(state)).await
     } else {
         error!("Failed to find account data");
         Err(StatusCode::NOT_FOUND)
