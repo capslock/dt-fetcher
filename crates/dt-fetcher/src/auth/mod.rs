@@ -145,8 +145,14 @@ impl<T: AuthStorage + Clone> AuthManager<T> {
         for auth in self.auth_data.auths.iter() {
             match auth {
                 Ok((_, auth)) => {
-                    Self::insert_new_refresh_auth(&mut auths, &auth).await?;
-                    Self::populate_account_data(&self.api, &mut self.accounts, &auth).await?;
+                    if auth.expired(REFRESH_BUFFER) {
+                        warn!(sub = ?auth.sub, "Auth expired, removing");
+                        self.auth_data.auths.remove(&auth.sub)?;
+                    } else {
+                        info!(sub = ?auth.sub, "Adding auth");
+                        Self::insert_new_refresh_auth(&mut auths, &auth).await?;
+                        Self::populate_account_data(&self.api, &mut self.accounts, &auth).await?;
+                    }
                 }
                 Err(e) => {
                     error!(error = %e, "Failed to get auth");
@@ -209,11 +215,13 @@ impl<T: AuthStorage + Clone> AuthManager<T> {
                 info!(auth = ?auth, "Auth refreshed");
                 if let Err(e) = self.auth_data.insert(refresh_auth.id, auth).await {
                     error!(error = %e, "Failed to insert auth, removing");
+                    self.auth_data.auths.remove(&refresh_auth.id)?;
                     return Err(e);
                 }
                 auths.push(refresh_auth);
             } else {
-                info!(sub = ?refresh_auth.id, "Auth not found, removing");
+                warn!(sub = ?refresh_auth.id, "Auth not found, removing");
+                self.auth_data.auths.remove(&refresh_auth.id)?;
             }
         }
         Ok(())

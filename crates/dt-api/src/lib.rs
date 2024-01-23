@@ -66,6 +66,14 @@ pub struct Auth {
     pub sub: AccountId,
 }
 
+impl Auth {
+    pub fn expired(&self, buffer: Duration) -> bool {
+        self.refresh_at
+            .map(|refresh_at| refresh_at <= Utc::now() + buffer)
+            .unwrap_or(true)
+    }
+}
+
 impl std::fmt::Debug for Auth {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Auth")

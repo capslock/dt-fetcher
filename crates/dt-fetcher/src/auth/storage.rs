@@ -16,6 +16,8 @@ pub trait AuthStorage: Send + Sync + DynClone + 'static {
 
     fn insert(&mut self, id: AccountId, auth: Auth) -> Result<()>;
 
+    fn remove(&mut self, id: &AccountId) -> Result<()>;
+
     fn iter(&self) -> ErasedAuthStorageIter;
 }
 
@@ -68,10 +70,18 @@ impl AuthStorage for InMemoryAuthStorage {
         Ok(())
     }
 
+    fn remove(&mut self, id: &AccountId) -> Result<()> {
+        self.auths.remove(id);
+        Ok(())
+    }
+
     fn iter(&self) -> ErasedAuthStorageIter {
         InMemoryAuthStorageIter::new(&self.auths).into()
     }
 }
+
+// 1MB cache size, more than enough to keep the whole DB in memory.
+const SLED_DB_CACHE_SIZE_BYTES: u64 = 1024 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct SledDbAuthStorage {
@@ -81,7 +91,12 @@ pub struct SledDbAuthStorage {
 impl SledDbAuthStorage {
     pub fn new<P: AsRef<Path>>(db: P) -> Result<Self> {
         Ok(Self {
-            db: sled::open(db).context("Failed to open db")?,
+            db: sled::Config::new()
+                .path(db)
+                .cache_capacity(SLED_DB_CACHE_SIZE_BYTES)
+                .flush_every_ms(None)
+                .open()
+                .context("Failed to open db")?,
         })
     }
 }
@@ -148,6 +163,14 @@ impl AuthStorage for SledDbAuthStorage {
         Ok(())
     }
 
+    fn remove(&mut self, id: &AccountId) -> Result<()> {
+        self.db
+            .remove(id.0.as_bytes())
+            .context("Failed to remove auth")?;
+        self.db.flush().context("Failed to flush")?;
+        Ok(())
+    }
+
     fn iter(&self) -> ErasedAuthStorageIter {
         SledDbAuthStorageIter::new(&self.db).into()
     }
@@ -185,6 +208,10 @@ impl AuthStorage for ErasedAuthStorage {
 
     fn insert(&mut self, id: AccountId, auth: Auth) -> Result<()> {
         self.0.insert(id, auth)
+    }
+
+    fn remove(&mut self, id: &AccountId) -> Result<()> {
+        self.0.remove(id)
     }
 
     fn iter(&self) -> ErasedAuthStorageIter {
