@@ -1,8 +1,8 @@
-use std::{collections::HashMap, path::Path, sync::Arc};
+use std::path::Path;
 
 use anyhow::{Context, Result};
 use futures_util::Future;
-use tokio::sync::RwLock;
+use im::HashMap;
 use tracing::instrument;
 
 use dt_api::{models::AccountId, Auth};
@@ -14,34 +14,40 @@ pub trait AuthStorage: Clone + Send + Sync + 'static {
 
     fn contains(&self, id: &AccountId) -> impl Future<Output = Result<bool>> + Send;
 
-    fn insert(&self, id: AccountId, auth: Auth) -> impl Future<Output = Result<()>> + Send;
+    fn insert(&mut self, id: AccountId, auth: Auth) -> impl Future<Output = Result<()>> + Send;
+
+    fn iter(&self) -> impl Future<Output = impl Iterator<Item = Result<(AccountId, Auth)>>> + Send;
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct InMemoryAuthStorage {
-    auths: Arc<RwLock<HashMap<AccountId, Auth>>>,
+    auths: HashMap<AccountId, Auth>,
 }
 
 impl AuthStorage for InMemoryAuthStorage {
     #[instrument(skip(self))]
-    async fn get<'a>(&'a self, id: AccountId) -> Result<Option<Auth>> {
-        Ok(self.auths.read().await.get(&id).cloned())
+    async fn get(&self, id: AccountId) -> Result<Option<Auth>> {
+        Ok(self.auths.get(&id).cloned())
     }
 
     #[instrument(skip(self))]
     async fn get_single(&self) -> Result<Option<AccountId>> {
-        Ok(self.auths.read().await.keys().next().copied())
+        Ok(self.auths.keys().next().copied())
     }
 
     #[instrument(skip(self))]
     async fn contains(&self, id: &AccountId) -> Result<bool> {
-        Ok(self.auths.read().await.contains_key(id))
+        Ok(self.auths.contains_key(id))
     }
 
     #[instrument(skip(self))]
-    async fn insert(&self, id: AccountId, auth: Auth) -> Result<()> {
-        self.auths.write().await.insert(id, auth);
+    async fn insert(&mut self, id: AccountId, auth: Auth) -> Result<()> {
+        self.auths.insert(id, auth);
         Ok(())
+    }
+
+    async fn iter(&self) -> impl Iterator<Item = Result<(AccountId, Auth)>> {
+        self.auths.iter().map(|(id, auth)| Ok((*id, auth.clone())))
     }
 }
 
@@ -83,7 +89,7 @@ impl AuthStorage for SledDbAuthStorage {
             .context("Failed to get auth")
     }
 
-    async fn insert(&self, id: AccountId, auth: Auth) -> Result<()> {
+    async fn insert(&mut self, id: AccountId, auth: Auth) -> Result<()> {
         self.db
             .insert(
                 id.0.as_bytes(),
@@ -91,6 +97,16 @@ impl AuthStorage for SledDbAuthStorage {
             )
             .context("Failed to insert")?;
         Ok(())
+    }
+
+    async fn iter(&self) -> impl Iterator<Item = Result<(AccountId, Auth)>> {
+        self.db.iter().map(|result| {
+            let (id, auth) = result.expect("Failed to get key/value pair");
+            Ok((
+                AccountId(uuid::Uuid::from_slice(&id).context("Failed to deserialize uuid")?),
+                serde_json::from_slice(&auth).context("Failed to deserialize auth")?,
+            ))
+        })
     }
 }
 
@@ -109,6 +125,26 @@ impl From<InMemoryAuthStorage> for ErasedAuthStorage {
 impl From<SledDbAuthStorage> for ErasedAuthStorage {
     fn from(value: SledDbAuthStorage) -> Self {
         ErasedAuthStorage::SledDbAuthStorage(value)
+    }
+}
+
+enum Either<L, R> {
+    Left(L),
+    Right(R),
+}
+
+impl<L, R> Iterator for Either<L, R>
+where
+    L: Iterator,
+    R: Iterator<Item = L::Item>,
+{
+    type Item = L::Item;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Either::Left(l) => l.next(),
+            Either::Right(r) => r.next(),
+        }
     }
 }
 
@@ -134,10 +170,17 @@ impl AuthStorage for ErasedAuthStorage {
         }
     }
 
-    async fn insert(&self, id: AccountId, auth: Auth) -> Result<()> {
+    async fn insert(&mut self, id: AccountId, auth: Auth) -> Result<()> {
         match self {
             ErasedAuthStorage::InMemoryAuthStorage(s) => s.insert(id, auth).await,
             ErasedAuthStorage::SledDbAuthStorage(s) => s.insert(id, auth).await,
+        }
+    }
+
+    async fn iter(&self) -> impl Iterator<Item = Result<(AccountId, Auth)>> {
+        match self {
+            ErasedAuthStorage::InMemoryAuthStorage(s) => Either::Left(s.iter().await),
+            ErasedAuthStorage::SledDbAuthStorage(s) => Either::Right(s.iter().await),
         }
     }
 }

@@ -85,19 +85,17 @@ async fn main() -> Result<()> {
 
     let accounts = Accounts::default();
 
-    let auth_manager = if let Some(db_path) = args.db_path {
-        AuthManager::<ErasedAuthStorage>::new_with_storage(
-            api.clone(),
-            accounts.clone(),
-            SledDbAuthStorage::new(db_path)?.into(),
-        )
+    let auth_storage = if let Some(db_path) = args.db_path {
+        SledDbAuthStorage::new(db_path)?.into()
     } else {
-        AuthManager::<ErasedAuthStorage>::new_with_storage(
-            api.clone(),
-            accounts.clone(),
-            InMemoryAuthStorage::default().into(),
-        )
+        InMemoryAuthStorage::default().into()
     };
+
+    let auth_manager = AuthManager::<ErasedAuthStorage>::new_with_storage(
+        api.clone(),
+        accounts.clone(),
+        auth_storage,
+    );
 
     if let Some(auth) = args.auth {
         let auth = Figment::new()

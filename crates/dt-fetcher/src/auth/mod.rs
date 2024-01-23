@@ -3,7 +3,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{anyhow, bail, Context as _, Result};
 use chrono::{DateTime, Utc};
 use dt_api::{models::AccountId, Auth};
 use futures_util::future::{self, Either};
@@ -96,9 +96,63 @@ impl<T: AuthStorage> AuthManager<T> {
         self.auth_data.clone()
     }
 
+    async fn insert_new_auth(
+        &mut self,
+        auths: &mut BinaryHeap<RefreshAuth>,
+        auth: Auth,
+    ) -> Result<()> {
+        info!(auth = ?auth, "Adding new auth");
+        if self.auth_data.contains(&auth.sub).await? {
+            error!(auth = ?auth, "Auth already exists");
+            bail!("Auth already exists");
+        }
+        Self::insert_new_refresh_auth(auths, &auth).await?;
+        Self::populate_account_data(&self.api, &mut self.accounts, &auth).await?;
+        if let Err(e) = self.auth_data.insert(auth.sub, auth).await {
+            error!(error = %e, "Failed to insert auth");
+            Err(e).context("Failed to insert auth")?;
+        }
+
+        Ok(())
+    }
+
+    async fn insert_new_refresh_auth(
+        auths: &mut BinaryHeap<RefreshAuth>,
+        auth: &Auth,
+    ) -> Result<()> {
+        auths.push(RefreshAuth::new(auth));
+        Ok(())
+    }
+
+    async fn populate_account_data(
+        api: &dt_api::Api,
+        accounts: &mut Accounts,
+        auth: &Auth,
+    ) -> Result<()> {
+        if let Ok(account) = AccountData::fetch(api, auth).await {
+            info!(sub = ?auth.sub, "Adding new account data");
+            accounts.insert(auth.sub, account).await;
+        } else {
+            error!(auth = ?auth, "Failed to fetch account data");
+            bail!("Failed to fetch account data");
+        }
+        Ok(())
+    }
+
     #[instrument(skip_all)]
     pub async fn start(mut self) -> Result<()> {
         let mut auths: BinaryHeap<RefreshAuth> = BinaryHeap::new();
+        for auth in self.auth_data.auths.iter().await {
+            match auth {
+                Ok((_, auth)) => {
+                    Self::insert_new_refresh_auth(&mut auths, &auth).await?;
+                    Self::populate_account_data(&self.api, &mut self.accounts, &auth).await?;
+                }
+                Err(e) => {
+                    error!(error = %e, "Failed to get auth");
+                }
+            }
+        }
         loop {
             let sleep = if let Some(refresh_auth) = auths.peek() {
                 let duration = (refresh_auth.refresh_at - DateTime::from(SystemTime::now()))
@@ -121,23 +175,7 @@ impl<T: AuthStorage> AuthManager<T> {
             };
             tokio::select! {
                 command = self.rx.recv() => match command {
-                    Some(AuthCommand::NewAuth(auth)) => {
-                        info!(auth = ?auth, "Adding new auth");
-                        if self.auth_data.contains(&auth.sub).await? {
-                            error!(auth = ?auth, "Auth already exists");
-                            continue;
-                        }
-                        auths.push(RefreshAuth::new(&auth));
-                        if let Ok(account) = AccountData::fetch(&self.api, &auth).await {
-                            info!(sub = ?auth.sub, "Adding new account data");
-                            self.accounts.insert(auth.sub, account).await;
-                        } else {
-                            error!(auth = ?auth, "Failed to fetch account data");
-                        }
-                        if let Err(e) = self.auth_data.insert(auth.sub, auth).await {
-                            error!(error = %e, "Failed to insert auth");
-                        }
-                    }
+                    Some(AuthCommand::NewAuth(auth)) => self.insert_new_auth(&mut auths, auth).await?,
                     Some(AuthCommand::Shutdown) => {
                         info!("Shutting down auth manager");
                         return Ok(())
@@ -218,7 +256,7 @@ impl<T: AuthStorage> AuthData<T> {
         self.auths.contains(id).await
     }
 
-    async fn insert(&self, id: AccountId, auth: Auth) -> Result<()> {
+    async fn insert(&mut self, id: AccountId, auth: Auth) -> Result<()> {
         self.auths.insert(id, auth).await
     }
 }
