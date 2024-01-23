@@ -140,6 +140,6 @@ async fn main() -> Result<()> {
             info!("Exiting");
             Ok(())
         }
-        Err(e) => Err(anyhow!("task failed: {e}")),
+        Err(e) => Err(e.context("Task failed")),
     }
 }

@@ -104,7 +104,7 @@ impl Iterator for SledDbAuthStorageIter {
             let (id, auth) = result.expect("Failed to get key/value pair");
             Ok((
                 AccountId(uuid::Uuid::from_slice(&id).context("Failed to deserialize uuid")?),
-                serde_json::from_slice(&auth).context("Failed to deserialize auth")?,
+                postcard::from_bytes(&auth).context("Failed to deserialize auth")?,
             ))
         })
     }
@@ -114,7 +114,7 @@ impl AuthStorage for SledDbAuthStorage {
     fn get(&self, id: AccountId) -> Result<Option<Auth>> {
         let result = self.db.get(id.0.as_bytes()).context("Failed to get auth")?;
         result
-            .map(|auth| serde_json::from_slice::<Auth>(&auth).context("Failed to deserialize auth"))
+            .map(|auth| postcard::from_bytes::<Auth>(&auth).context("Failed to deserialize auth"))
             .transpose()
     }
 
@@ -139,7 +139,9 @@ impl AuthStorage for SledDbAuthStorage {
         self.db
             .insert(
                 id.0.as_bytes(),
-                serde_json::to_vec(&auth).context("Failed to serialize auth")?,
+                postcard::to_vec::<Auth, 1024>(&auth)
+                    .context("Failed to serialize auth")?
+                    .as_slice(),
             )
             .context("Failed to insert")?;
         self.db.flush().context("Failed to flush")?;
