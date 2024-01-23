@@ -141,6 +141,13 @@
                   Persist authentication tokens to disk.
                 '';
               };
+              disableSingle = mkOption {
+                type = with types; bool;
+                default = false;
+                description = ''
+                  Disable single-account endpoints.
+                '';
+              };
               package = mkOption {
                 type = types.package;
                 default = self.packages.${pkgs.system}.default;
@@ -164,11 +171,13 @@
                   ([
                       "--log-to-systemd"
                     ]
-                    ++ (optionals cfg.persistAuth
+                    ++ (pkgs.lib.optionals cfg.persistAuth
                       [
                         "--db-path"
                         "$STATE_DIRECTORY/db.sled"
-                      ]));
+                      ])
+                    ++ (pkgs.lib.optional cfg.disableSingle "--disable-single")
+                      );
               in {
                 Type = "exec";
                 DynamicUser = true;

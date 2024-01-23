@@ -41,6 +41,9 @@ struct Args {
     /// Path to database
     #[arg(long, value_parser = clap::value_parser!(PathBuf))]
     db_path: Option<PathBuf>,
+    /// Disable `single` endpoint variants
+    #[arg(long, default_value = "false")]
+    disable_single: bool,
 }
 
 fn init_logging(use_systemd: bool) -> Result<()> {
@@ -111,7 +114,11 @@ async fn main() -> Result<()> {
 
     let auth_data = auth_manager.auth_data();
 
-    let server = server::Server::new(api, accounts, auth_data.clone(), args.listen_addr);
+    let server = if args.disable_single {
+        server::Server::new(api, accounts, auth_data.clone(), args.listen_addr)
+    } else {
+        server::Server::new_with_single(api, accounts, auth_data.clone(), args.listen_addr)
+    };
 
     info!("Starting server");
 

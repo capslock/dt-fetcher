@@ -55,22 +55,46 @@ impl Server {
         auth_data: crate::AuthData<T>,
         listen_addr: SocketAddr,
     ) -> Self {
+        Self::new_impl(api, accounts, auth_data, listen_addr, false)
+    }
+
+    pub fn new_with_single<T: AuthStorage + Clone>(
+        api: dt_api::Api,
+        accounts: crate::account::Accounts,
+        auth_data: crate::AuthData<T>,
+        listen_addr: SocketAddr,
+    ) -> Self {
+        Self::new_impl(api, accounts, auth_data, listen_addr, true)
+    }
+
+    fn new_impl<T: AuthStorage + Clone>(
+        api: dt_api::Api,
+        accounts: crate::account::Accounts,
+        auth_data: AuthData<T>,
+        listen_addr: SocketAddr,
+        enable_single: bool,
+    ) -> Self {
         let app_data = AppData {
             api,
             accounts,
             auth_data,
         };
 
-        let app = Router::new()
-        .route("/store", get(store_single))
-        .route("/summary", get(summary_single))
-        .route("/master_data", get(master_data_single))
-        .route("/store/:id", get(store))
-        .route("/summary/:id", get(summary))
-        .route("/master_data/:id", get(master_data))
-        .route("/auth/:id", put(put_auth))
-        .route("/auth/:id", get(get_auth))
-        .with_state(app_data)
+        let mut router = Router::new()
+            .route("/store/:id", get(store))
+            .route("/summary/:id", get(summary))
+            .route("/master_data/:id", get(master_data))
+            .route("/auth/:id", put(put_auth))
+            .route("/auth/:id", get(get_auth));
+
+        if enable_single {
+            router = router
+                .route("/store", get(store_single))
+                .route("/summary", get(summary_single))
+                .route("/master_data", get(master_data_single));
+        }
+
+        let app = router.with_state(app_data)
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(|_request: &Request<Body>| tracing::info_span!("http-request"))
