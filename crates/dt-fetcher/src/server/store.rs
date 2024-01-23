@@ -59,7 +59,6 @@ async fn refresh_store<T: AuthStorage>(
     let auth_data = if let Some(auth_data) = state
         .auth_data
         .get(*account_id)
-        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
     {
         auth_data
@@ -144,7 +143,6 @@ pub(crate) async fn store_single<T: AuthStorage>(
     let account = state
         .auth_data
         .get_single()
-        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     if let Some(account) = account {
         store(Path(account), query, State(state)).await

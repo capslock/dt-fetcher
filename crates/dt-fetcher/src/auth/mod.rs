@@ -102,7 +102,7 @@ impl<T: AuthStorage> AuthManager<T> {
         auth: Auth,
     ) -> Result<()> {
         info!(auth = ?auth, "Adding new auth");
-        if self.auth_data.contains(&auth.sub).await? {
+        if self.auth_data.contains(&auth.sub)? {
             error!(auth = ?auth, "Auth already exists");
             bail!("Auth already exists");
         }
@@ -142,7 +142,7 @@ impl<T: AuthStorage> AuthManager<T> {
     #[instrument(skip_all)]
     pub async fn start(mut self) -> Result<()> {
         let mut auths: BinaryHeap<RefreshAuth> = BinaryHeap::new();
-        for auth in self.auth_data.auths.iter().await {
+        for auth in self.auth_data.auths.iter() {
             match auth {
                 Ok((_, auth)) => {
                     Self::insert_new_refresh_auth(&mut auths, &auth).await?;
@@ -197,7 +197,7 @@ impl<T: AuthStorage> AuthManager<T> {
     #[instrument(skip_all)]
     async fn refresh_auth(&mut self, auths: &mut BinaryHeap<RefreshAuth>) -> Result<()> {
         if let Some(refresh_auth) = auths.pop() {
-            if let Some(auth) = self.auth_data.get(refresh_auth.id).await? {
+            if let Some(auth) = self.auth_data.get(refresh_auth.id)? {
                 info!(sub = ?refresh_auth.id, "Refreshing auth");
                 let mut auth = self
                     .api
@@ -243,20 +243,20 @@ impl<T: AuthStorage> AuthData<T> {
             .context("Failed to send shutdown")
     }
 
-    pub async fn get(&self, id: AccountId) -> Result<Option<Auth>> {
-        self.auths.get(id).await
+    pub fn get(&self, id: AccountId) -> Result<Option<Auth>> {
+        self.auths.get(id)
     }
 
-    pub async fn get_single(&self) -> Result<Option<AccountId>> {
-        self.auths.get_single().await
+    pub fn get_single(&self) -> Result<Option<AccountId>> {
+        self.auths.get_single()
     }
 
     #[instrument(skip(self))]
-    pub async fn contains(&self, id: &AccountId) -> Result<bool> {
-        self.auths.contains(id).await
+    pub fn contains(&self, id: &AccountId) -> Result<bool> {
+        self.auths.contains(id)
     }
 
     async fn insert(&mut self, id: AccountId, auth: Auth) -> Result<()> {
-        self.auths.insert(id, auth).await
+        self.auths.insert(id, auth)
     }
 }

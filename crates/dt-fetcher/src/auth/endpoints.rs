@@ -17,7 +17,6 @@ pub(crate) async fn put_auth<T: AuthStorage>(
     let result = state
         .auths
         .contains(&id)
-        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR);
     if let Ok(true) = result {
         return StatusCode::OK;
@@ -39,7 +38,6 @@ pub(crate) async fn get_auth<T: AuthStorage>(
     let result = state
         .auths
         .contains(&id)
-        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR);
     if let Ok(true) = result {
         StatusCode::OK

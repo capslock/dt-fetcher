@@ -125,7 +125,6 @@ async fn summary_single<T: AuthStorage>(
     let account = state
         .auth_data
         .get_single()
-        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     if let Some(account) = account {
         summary(Path(account), State(state)).await
@@ -150,7 +149,6 @@ async fn refresh_summary<T: AuthStorage>(
     if let Some(auth_data) = state
         .auth_data
         .get(*account_id)
-        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
     {
         let new_summary = api.get_summary(&auth_data).await;
@@ -190,7 +188,6 @@ async fn master_data_single<T: AuthStorage>(
     let account = state
         .auth_data
         .get_single()
-        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     if let Some(account) = account {
         master_data(Path(account), State(state)).await
