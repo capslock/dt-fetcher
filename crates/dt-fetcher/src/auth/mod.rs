@@ -1,16 +1,12 @@
 use std::{
     collections::BinaryHeap,
-    ops::Deref,
     time::{Duration, SystemTime},
 };
 
 use anyhow::{anyhow, Context as _, Result};
 use chrono::{DateTime, Utc};
 use dt_api::{models::AccountId, Auth};
-use futures_util::{
-    future::{self, Either},
-    Future,
-};
+use futures_util::future::{self, Either};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tracing::{error, info, instrument, warn};
 
@@ -163,13 +159,7 @@ impl<T: AuthStorage> AuthManager<T> {
     #[instrument(skip_all)]
     async fn refresh_auth(&mut self, auths: &mut BinaryHeap<RefreshAuth>) -> Result<()> {
         if let Some(refresh_auth) = auths.pop() {
-            if let Some(auth) = self
-                .auth_data
-                .get(refresh_auth.id)
-                .await?
-                .as_deref()
-                .cloned()
-            {
+            if let Some(auth) = self.auth_data.get(refresh_auth.id).await? {
                 info!(sub = ?refresh_auth.id, "Refreshing auth");
                 let mut auth = self
                     .api
@@ -215,11 +205,8 @@ impl<T: AuthStorage> AuthData<T> {
             .context("Failed to send shutdown")
     }
 
-    pub fn get(
-        &self,
-        id: AccountId,
-    ) -> impl Future<Output = Result<Option<impl Deref<Target = Auth> + '_>>> {
-        self.auths.get(id)
+    pub async fn get(&self, id: AccountId) -> Result<Option<Auth>> {
+        self.auths.get(id).await
     }
 
     pub async fn get_single(&self) -> Result<Option<AccountId>> {
