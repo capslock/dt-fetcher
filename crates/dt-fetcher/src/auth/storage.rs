@@ -1,14 +1,13 @@
 use std::path::Path;
 
 use anyhow::{Context, Result};
+use dyn_clone::DynClone;
 use im::HashMap;
 use tracing::instrument;
 
 use dt_api::{models::AccountId, Auth};
 
-pub trait AuthStorage: Send + Sync + 'static {
-    type Iter: Iterator<Item = Result<(AccountId, Auth)>>;
-
+pub trait AuthStorage: Send + Sync + DynClone + 'static {
     fn get(&self, id: AccountId) -> Result<Option<Auth>>;
 
     fn get_single(&self) -> Result<Option<AccountId>>;
@@ -17,8 +16,10 @@ pub trait AuthStorage: Send + Sync + 'static {
 
     fn insert(&mut self, id: AccountId, auth: Auth) -> Result<()>;
 
-    fn iter(&self) -> Self::Iter;
+    fn iter(&self) -> ErasedAuthStorageIter;
 }
+
+dyn_clone::clone_trait_object!(AuthStorage);
 
 #[derive(Debug, Clone, Default)]
 pub struct InMemoryAuthStorage {
@@ -46,8 +47,6 @@ impl Iterator for InMemoryAuthStorageIter {
 }
 
 impl AuthStorage for InMemoryAuthStorage {
-    type Iter = InMemoryAuthStorageIter;
-
     #[instrument(skip(self))]
     fn get(&self, id: AccountId) -> Result<Option<Auth>> {
         Ok(self.auths.get(&id).cloned())
@@ -69,8 +68,8 @@ impl AuthStorage for InMemoryAuthStorage {
         Ok(())
     }
 
-    fn iter(&self) -> Self::Iter {
-        InMemoryAuthStorageIter::new(&self.auths)
+    fn iter(&self) -> ErasedAuthStorageIter {
+        InMemoryAuthStorageIter::new(&self.auths).into()
     }
 }
 
@@ -112,8 +111,6 @@ impl Iterator for SledDbAuthStorageIter {
 }
 
 impl AuthStorage for SledDbAuthStorage {
-    type Iter = SledDbAuthStorageIter;
-
     fn get(&self, id: AccountId) -> Result<Option<Auth>> {
         let result = self.db.get(id.0.as_bytes()).context("Failed to get auth")?;
         result
@@ -149,84 +146,58 @@ impl AuthStorage for SledDbAuthStorage {
         Ok(())
     }
 
-    fn iter(&self) -> Self::Iter {
-        SledDbAuthStorageIter::new(&self.db)
+    fn iter(&self) -> ErasedAuthStorageIter {
+        SledDbAuthStorageIter::new(&self.db).into()
     }
 }
 
-#[derive(Debug, Clone)]
-pub enum ErasedAuthStorage {
-    InMemoryAuthStorage(InMemoryAuthStorage),
-    SledDbAuthStorage(SledDbAuthStorage),
+type ErasedAuthStorageIter = Box<dyn Iterator<Item = Result<(AccountId, Auth)>> + Send>;
+
+impl From<InMemoryAuthStorageIter> for ErasedAuthStorageIter {
+    fn from(value: InMemoryAuthStorageIter) -> Self {
+        Box::new(value)
+    }
+}
+
+impl From<SledDbAuthStorageIter> for ErasedAuthStorageIter {
+    fn from(value: SledDbAuthStorageIter) -> Self {
+        Box::new(value)
+    }
+}
+
+#[derive(Clone)]
+pub struct ErasedAuthStorage(Box<dyn AuthStorage>);
+
+impl AuthStorage for ErasedAuthStorage {
+    fn get(&self, id: AccountId) -> Result<Option<Auth>> {
+        self.0.get(id)
+    }
+
+    fn get_single(&self) -> Result<Option<AccountId>> {
+        self.0.get_single()
+    }
+
+    fn contains(&self, id: &AccountId) -> Result<bool> {
+        self.0.contains(id)
+    }
+
+    fn insert(&mut self, id: AccountId, auth: Auth) -> Result<()> {
+        self.0.insert(id, auth)
+    }
+
+    fn iter(&self) -> ErasedAuthStorageIter {
+        Box::new(self.0.iter())
+    }
 }
 
 impl From<InMemoryAuthStorage> for ErasedAuthStorage {
     fn from(value: InMemoryAuthStorage) -> Self {
-        ErasedAuthStorage::InMemoryAuthStorage(value)
+        Self(Box::new(value))
     }
 }
 
 impl From<SledDbAuthStorage> for ErasedAuthStorage {
     fn from(value: SledDbAuthStorage) -> Self {
-        ErasedAuthStorage::SledDbAuthStorage(value)
-    }
-}
-
-pub enum Either<L, R> {
-    Left(L),
-    Right(R),
-}
-
-impl<L, R> Iterator for Either<L, R>
-where
-    L: Iterator,
-    R: Iterator<Item = L::Item>,
-{
-    type Item = L::Item;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        match self {
-            Either::Left(l) => l.next(),
-            Either::Right(r) => r.next(),
-        }
-    }
-}
-
-impl AuthStorage for ErasedAuthStorage {
-    type Iter = Either<InMemoryAuthStorageIter, SledDbAuthStorageIter>;
-
-    fn get(&'_ self, id: AccountId) -> Result<Option<Auth>> {
-        match self {
-            ErasedAuthStorage::InMemoryAuthStorage(s) => s.get(id),
-            ErasedAuthStorage::SledDbAuthStorage(s) => s.get(id),
-        }
-    }
-
-    fn get_single(&self) -> Result<Option<AccountId>> {
-        match self {
-            ErasedAuthStorage::InMemoryAuthStorage(s) => s.get_single(),
-            ErasedAuthStorage::SledDbAuthStorage(s) => s.get_single(),
-        }
-    }
-
-    fn contains(&self, id: &AccountId) -> Result<bool> {
-        match self {
-            ErasedAuthStorage::InMemoryAuthStorage(s) => s.contains(id),
-            ErasedAuthStorage::SledDbAuthStorage(s) => s.contains(id),
-        }
-    }
-
-    fn insert(&mut self, id: AccountId, auth: Auth) -> Result<()> {
-        match self {
-            ErasedAuthStorage::InMemoryAuthStorage(s) => s.insert(id, auth),
-            ErasedAuthStorage::SledDbAuthStorage(s) => s.insert(id, auth),
-        }
-    }
-
-    fn iter(&self) -> Self::Iter {
-        match self {
-            ErasedAuthStorage::InMemoryAuthStorage(s) => Either::Left(s.iter()),
-            ErasedAuthStorage::SledDbAuthStorage(s) => Either::Right(s.iter()),
-        }
+        Self(Box::new(value))
     }
 }
