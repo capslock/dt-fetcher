@@ -134,6 +134,13 @@
                   Environment settings for the dt-fetcher service.
                 '';
               };
+              persistAuth = mkOption {
+                type = with types; bool;
+                default = false;
+                description = ''
+                  Persist authentication tokens to disk.
+                '';
+              };
               package = mkOption {
                 type = types.package;
                 default = self.packages.${pkgs.system}.default;
@@ -152,10 +159,20 @@
               description = "DT Fetcher";
               serviceConfig = let
                 pkg = cfg.package;
+                args =
+                  concatStringsSep " "
+                  ([
+                      "--log-to-systemd"
+                    ]
+                    ++ (optionals cfg.persistAuth
+                      [
+                        "--db-path"
+                        "$STATE_DIRECTORY/db.sled"
+                      ]));
               in {
                 Type = "exec";
                 DynamicUser = true;
-                ExecStart = "${pkg}/bin/dt-fetcher --log-to-systemd";
+                ExecStart = "${pkg}/bin/dt-fetcher ${args}";
                 EnvironmentFile = mkIf (cfg.environmentFile != null) cfg.environmentFile;
                 Environment = cfg.environment;
                 NoNewPrivileges = true;
@@ -178,6 +195,7 @@
                 ProtectClock = true;
                 ProtectProc = "noaccess";
                 ProtectHostname = true;
+                StateDirectory = mkIf cfg.persistAuth "dt-fetcher";
                 SystemCallArchitectures = "native";
                 SystemCallFilter = ["@system-service" "~@resources" "~@privileged"];
                 UMask = "0077";
