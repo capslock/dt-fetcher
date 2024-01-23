@@ -56,14 +56,14 @@ pub(crate) enum AuthCommand {
 }
 
 #[derive(Debug)]
-pub(crate) struct AuthManager<T: AuthStorage> {
+pub(crate) struct AuthManager<T: AuthStorage + Clone> {
     api: dt_api::Api,
     auth_data: AuthData<T>,
     accounts: Accounts,
     rx: Receiver<AuthCommand>,
 }
 
-impl<T: AuthStorage + Default> AuthManager<T> {
+impl<T: AuthStorage + Default + Clone> AuthManager<T> {
     #[instrument(skip_all)]
     pub fn new(api: dt_api::Api, accounts: Accounts) -> Self {
         let (tx, rx) = channel(100);
@@ -79,7 +79,7 @@ impl<T: AuthStorage + Default> AuthManager<T> {
     }
 }
 
-impl<T: AuthStorage> AuthManager<T> {
+impl<T: AuthStorage + Clone> AuthManager<T> {
     #[instrument(skip_all)]
     pub fn new_with_storage(api: dt_api::Api, accounts: Accounts, storage: T) -> Self {
         let (tx, rx) = channel(100);

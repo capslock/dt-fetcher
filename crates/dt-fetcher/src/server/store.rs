@@ -23,7 +23,7 @@ pub(crate) struct StoreQuery {
 }
 
 #[instrument(skip(state))]
-async fn refresh_store<T: AuthStorage>(
+async fn refresh_store<T: AuthStorage + Clone>(
     account_id: &AccountId,
     character_id: CharacterId,
     state: AppData<T>,
@@ -100,7 +100,7 @@ async fn refresh_store<T: AuthStorage>(
 }
 
 #[instrument(skip(state))]
-pub(crate) async fn store<T: AuthStorage>(
+pub(crate) async fn store<T: AuthStorage + Clone>(
     Path(id): Path<AccountId>,
     Query(StoreQuery {
         character_id,
@@ -136,7 +136,7 @@ pub(crate) async fn store<T: AuthStorage>(
 }
 
 #[instrument(skip(state))]
-pub(crate) async fn store_single<T: AuthStorage>(
+pub(crate) async fn store_single<T: AuthStorage + Clone>(
     query: Query<StoreQuery>,
     State(state): State<AppData<T>>,
 ) -> Result<Json<Store>, StatusCode> {

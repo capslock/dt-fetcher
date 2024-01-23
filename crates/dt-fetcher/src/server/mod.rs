@@ -25,7 +25,7 @@ struct AppData<T: AuthStorage> {
     auth_data: AuthData<T>,
 }
 
-impl<T: AuthStorage> FromRef<AppData<T>> for AuthData<T> {
+impl<T: AuthStorage + Clone> FromRef<AppData<T>> for AuthData<T> {
     fn from_ref(state: &AppData<T>) -> Self {
         state.auth_data.clone()
     }
@@ -49,7 +49,7 @@ pub struct Server {
 }
 
 impl Server {
-    pub fn new<T: AuthStorage>(
+    pub fn new<T: AuthStorage + Clone>(
         api: dt_api::Api,
         accounts: crate::account::Accounts,
         auth_data: crate::AuthData<T>,

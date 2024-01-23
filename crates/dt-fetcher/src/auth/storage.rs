@@ -6,7 +6,9 @@ use tracing::instrument;
 
 use dt_api::{models::AccountId, Auth};
 
-pub trait AuthStorage: Send + Sync + Clone + 'static {
+pub trait AuthStorage: Send + Sync + 'static {
+    type Iter: Iterator<Item = Result<(AccountId, Auth)>>;
+
     fn get(&self, id: AccountId) -> Result<Option<Auth>>;
 
     fn get_single(&self) -> Result<Option<AccountId>>;
@@ -15,7 +17,7 @@ pub trait AuthStorage: Send + Sync + Clone + 'static {
 
     fn insert(&mut self, id: AccountId, auth: Auth) -> Result<()>;
 
-    fn iter(&self) -> impl Iterator<Item = Result<(AccountId, Auth)>>;
+    fn iter(&self) -> Self::Iter;
 }
 
 #[derive(Debug, Clone, Default)]
@@ -23,7 +25,29 @@ pub struct InMemoryAuthStorage {
     auths: HashMap<AccountId, Auth>,
 }
 
+pub struct InMemoryAuthStorageIter {
+    inner: im::hashmap::ConsumingIter<(AccountId, Auth)>,
+}
+
+impl InMemoryAuthStorageIter {
+    fn new(auths: &HashMap<AccountId, Auth>) -> Self {
+        Self {
+            inner: auths.clone().into_iter(),
+        }
+    }
+}
+
+impl Iterator for InMemoryAuthStorageIter {
+    type Item = Result<(AccountId, Auth)>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.next().map(|(id, auth)| Ok((id, auth)))
+    }
+}
+
 impl AuthStorage for InMemoryAuthStorage {
+    type Iter = InMemoryAuthStorageIter;
+
     #[instrument(skip(self))]
     fn get(&self, id: AccountId) -> Result<Option<Auth>> {
         Ok(self.auths.get(&id).cloned())
@@ -45,8 +69,8 @@ impl AuthStorage for InMemoryAuthStorage {
         Ok(())
     }
 
-    fn iter(&self) -> impl Iterator<Item = Result<(AccountId, Auth)>> {
-        self.auths.iter().map(|(id, auth)| Ok((*id, auth.clone())))
+    fn iter(&self) -> Self::Iter {
+        InMemoryAuthStorageIter::new(&self.auths)
     }
 }
 
@@ -63,7 +87,33 @@ impl SledDbAuthStorage {
     }
 }
 
+pub struct SledDbAuthStorageIter {
+    inner: sled::Iter,
+}
+
+impl SledDbAuthStorageIter {
+    fn new(db: &sled::Db) -> Self {
+        Self { inner: db.iter() }
+    }
+}
+
+impl Iterator for SledDbAuthStorageIter {
+    type Item = Result<(AccountId, Auth)>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.next().map(|result| {
+            let (id, auth) = result.expect("Failed to get key/value pair");
+            Ok((
+                AccountId(uuid::Uuid::from_slice(&id).context("Failed to deserialize uuid")?),
+                serde_json::from_slice(&auth).context("Failed to deserialize auth")?,
+            ))
+        })
+    }
+}
+
 impl AuthStorage for SledDbAuthStorage {
+    type Iter = SledDbAuthStorageIter;
+
     fn get(&self, id: AccountId) -> Result<Option<Auth>> {
         let result = self.db.get(id.0.as_bytes()).context("Failed to get auth")?;
         result
@@ -99,14 +149,8 @@ impl AuthStorage for SledDbAuthStorage {
         Ok(())
     }
 
-    fn iter(&self) -> impl Iterator<Item = Result<(AccountId, Auth)>> {
-        self.db.iter().map(|result| {
-            let (id, auth) = result.expect("Failed to get key/value pair");
-            Ok((
-                AccountId(uuid::Uuid::from_slice(&id).context("Failed to deserialize uuid")?),
-                serde_json::from_slice(&auth).context("Failed to deserialize auth")?,
-            ))
-        })
+    fn iter(&self) -> Self::Iter {
+        SledDbAuthStorageIter::new(&self.db)
     }
 }
 
@@ -128,7 +172,7 @@ impl From<SledDbAuthStorage> for ErasedAuthStorage {
     }
 }
 
-enum Either<L, R> {
+pub enum Either<L, R> {
     Left(L),
     Right(R),
 }
@@ -149,6 +193,8 @@ where
 }
 
 impl AuthStorage for ErasedAuthStorage {
+    type Iter = Either<InMemoryAuthStorageIter, SledDbAuthStorageIter>;
+
     fn get(&'_ self, id: AccountId) -> Result<Option<Auth>> {
         match self {
             ErasedAuthStorage::InMemoryAuthStorage(s) => s.get(id),
@@ -177,7 +223,7 @@ impl AuthStorage for ErasedAuthStorage {
         }
     }
 
-    fn iter(&self) -> impl Iterator<Item = Result<(AccountId, Auth)>> {
+    fn iter(&self) -> Self::Iter {
         match self {
             ErasedAuthStorage::InMemoryAuthStorage(s) => Either::Left(s.iter()),
             ErasedAuthStorage::SledDbAuthStorage(s) => Either::Right(s.iter()),
