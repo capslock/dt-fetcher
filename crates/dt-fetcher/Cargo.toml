@@ -19,7 +19,6 @@ futures-util = "0.3.29"
 im = "15.1.0"
 postcard = "1.0.8"
 reqwest = "0.11.22"
-rkyv = { version = "0.7.43", features = ["uuid"] }
 serde = {version = "1.0.193", features = ["derive"]}
 sled = "0.34.7"
 tokio = {version = "1.35.0", features = ["full"]}
