@@ -148,6 +148,13 @@
                   Disable single-account endpoints.
                 '';
               };
+              listenAddr = mkOption {
+                type = with types; nullOr str;
+                default = null;
+                description = ''
+                  Address to listen on.
+                '';
+              };
               package = mkOption {
                 type = types.package;
                 default = self.packages.${pkgs.system}.default;
@@ -177,7 +184,12 @@
                         "$STATE_DIRECTORY/db.sled"
                       ])
                     ++ (pkgs.lib.optional cfg.disableSingle "--disable-single")
-                      );
+                      )
+                    ++ (pkgs.lib.optionals (cfg.listenAddr != null)
+                      [
+                        "--listen-addr"
+                        cfg.listenAddr
+                      ]);
               in {
                 Type = "exec";
                 DynamicUser = true;
