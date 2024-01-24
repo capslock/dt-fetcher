@@ -1,6 +1,6 @@
 use std::{net::SocketAddr, path::PathBuf};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use clap::Parser;
 use figment::{providers::Format, Figment};
 use futures_util::future;
@@ -62,7 +62,9 @@ fn init_logging(use_systemd: bool) -> Result<()> {
         }
         #[cfg(not(target_os = "linux"))]
         if use_systemd {
-            return Err(anyhow!("Systemd logging is not supported on this platform"));
+            return Err(anyhow::anyhow!(
+                "Systemd logging is not supported on this platform"
+            ));
         } else {
             tracing_subscriber::fmt::layer().pretty().with_target(true)
         }
