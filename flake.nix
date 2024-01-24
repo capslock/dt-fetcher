@@ -181,7 +181,7 @@
                     ++ (pkgs.lib.optionals cfg.persistAuth
                       [
                         "--db-path"
-                        "$STATE_DIRECTORY/db.sled"
+                        "$\{STATE_DIRECTORY\}/db.sled"
                       ])
                     ++ (pkgs.lib.optional cfg.disableSingle "--disable-single")
                     ++ (pkgs.lib.optionals (cfg.listenAddr != null)
