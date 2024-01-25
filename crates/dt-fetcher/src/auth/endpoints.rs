@@ -15,7 +15,6 @@ pub(crate) async fn put_auth<T: AuthStorage>(
     Json(auth): Json<dt_api::Auth>,
 ) -> StatusCode {
     let result = state
-        .auths
         .contains(&id)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR);
     if let Ok(true) = result {
@@ -36,7 +35,6 @@ pub(crate) async fn get_auth<T: AuthStorage>(
     State(state): State<AuthData<T>>,
 ) -> StatusCode {
     let result = state
-        .auths
         .contains(&id)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR);
     if let Ok(true) = result {
