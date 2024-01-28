@@ -91,8 +91,10 @@ async fn main() -> Result<()> {
     let accounts = Accounts::default();
 
     let auth_storage = if let Some(db_path) = args.db_path {
+        info!("Using database at {} for auth storage", db_path.display());
         SledDbAuthStorage::new(db_path)?.into()
     } else {
+        info!("Using in-memory auth storage");
         InMemoryAuthStorage::default().into()
     };
 
@@ -103,6 +105,8 @@ async fn main() -> Result<()> {
     );
 
     if let Some(auth) = args.auth {
+        info!("Adding auth from {}", auth.display());
+
         let auth = Figment::new()
             .merge(figment::providers::Json::file(auth))
             .extract()?;
@@ -117,8 +121,10 @@ async fn main() -> Result<()> {
     let auth_data = auth_manager.auth_data();
 
     let server = if args.disable_single {
+        info!("Creating server with single endpoint variants disabled");
         server::Server::new(api, accounts, auth_data.clone(), args.listen_addr)
     } else {
+        info!("Creating server with single endpoint variants enabled");
         server::Server::new_with_single(api, accounts, auth_data.clone(), args.listen_addr)
     };
 
