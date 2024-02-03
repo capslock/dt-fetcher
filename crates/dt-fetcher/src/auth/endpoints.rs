@@ -43,6 +43,7 @@ pub(crate) async fn get_auth<T: AuthStorage>(
         error!("Failed to check if auth exists: {}", e);
         StatusCode::INTERNAL_SERVER_ERROR
     } else {
+        error!("Auth not found");
         StatusCode::NOT_FOUND
     }
 }

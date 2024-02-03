@@ -70,11 +70,13 @@ impl AuthStorage for InMemoryAuthStorage {
         Ok(())
     }
 
+    #[instrument(skip(self))]
     fn remove(&mut self, id: &AccountId) -> Result<()> {
         self.auths.remove(id);
         Ok(())
     }
 
+    #[instrument(skip(self))]
     fn iter(&self) -> ErasedAuthStorageIter {
         InMemoryAuthStorageIter::new(&self.auths).into()
     }
@@ -126,6 +128,7 @@ impl Iterator for SledDbAuthStorageIter {
 }
 
 impl AuthStorage for SledDbAuthStorage {
+    #[instrument(skip(self))]
     fn get(&self, id: AccountId) -> Result<Option<Auth>> {
         let result = self.db.get(id.0.as_bytes()).context("Failed to get auth")?;
         result
@@ -133,6 +136,7 @@ impl AuthStorage for SledDbAuthStorage {
             .transpose()
     }
 
+    #[instrument(skip(self))]
     fn get_single(&self) -> Result<Option<AccountId>> {
         let result = self.db.first().context("Failed to get auth")?;
         result
@@ -144,12 +148,14 @@ impl AuthStorage for SledDbAuthStorage {
             .transpose()
     }
 
+    #[instrument(skip(self))]
     fn contains(&self, id: &AccountId) -> Result<bool> {
         self.db
             .contains_key(id.0.as_bytes())
             .context("Failed to get auth")
     }
 
+    #[instrument(skip(self))]
     fn insert(&mut self, id: AccountId, auth: Auth) -> Result<()> {
         self.db
             .insert(
@@ -163,6 +169,7 @@ impl AuthStorage for SledDbAuthStorage {
         Ok(())
     }
 
+    #[instrument(skip(self))]
     fn remove(&mut self, id: &AccountId) -> Result<()> {
         self.db
             .remove(id.0.as_bytes())
@@ -171,6 +178,7 @@ impl AuthStorage for SledDbAuthStorage {
         Ok(())
     }
 
+    #[instrument(skip(self))]
     fn iter(&self) -> ErasedAuthStorageIter {
         SledDbAuthStorageIter::new(&self.db).into()
     }
@@ -194,26 +202,32 @@ impl From<SledDbAuthStorageIter> for ErasedAuthStorageIter {
 pub struct ErasedAuthStorage(Box<dyn AuthStorage>);
 
 impl AuthStorage for ErasedAuthStorage {
+    #[instrument(skip(self))]
     fn get(&self, id: AccountId) -> Result<Option<Auth>> {
         self.0.get(id)
     }
 
+    #[instrument(skip(self))]
     fn get_single(&self) -> Result<Option<AccountId>> {
         self.0.get_single()
     }
 
+    #[instrument(skip(self))]
     fn contains(&self, id: &AccountId) -> Result<bool> {
         self.0.contains(id)
     }
 
+    #[instrument(skip(self))]
     fn insert(&mut self, id: AccountId, auth: Auth) -> Result<()> {
         self.0.insert(id, auth)
     }
 
+    #[instrument(skip(self))]
     fn remove(&mut self, id: &AccountId) -> Result<()> {
         self.0.remove(id)
     }
 
+    #[instrument(skip(self))]
     fn iter(&self) -> ErasedAuthStorageIter {
         Box::new(self.0.iter())
     }

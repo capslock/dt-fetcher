@@ -92,6 +92,7 @@ impl<T: AuthStorage + Clone> AuthManager<T> {
         self.auth_data.clone()
     }
 
+    #[instrument(skip(self, auths))]
     async fn insert_new_auth(
         &mut self,
         auths: &mut BinaryHeap<RefreshAuth>,
@@ -102,7 +103,7 @@ impl<T: AuthStorage + Clone> AuthManager<T> {
             error!(auth = ?auth, "Auth already exists");
             bail!("Auth already exists");
         }
-        Self::insert_new_refresh_auth(auths, &auth).await?;
+        Self::insert_new_refresh_auth(auths, &auth).await;
         Self::populate_account_data(&self.api, &mut self.accounts, &auth).await?;
         if let Err(e) = self.auth_data.insert(auth.sub, auth).await {
             error!(error = %e, "Failed to insert auth");
@@ -112,14 +113,11 @@ impl<T: AuthStorage + Clone> AuthManager<T> {
         Ok(())
     }
 
-    async fn insert_new_refresh_auth(
-        auths: &mut BinaryHeap<RefreshAuth>,
-        auth: &Auth,
-    ) -> Result<()> {
+    async fn insert_new_refresh_auth(auths: &mut BinaryHeap<RefreshAuth>, auth: &Auth) {
         auths.push(RefreshAuth::new(auth));
-        Ok(())
     }
 
+    #[instrument(skip(api, accounts))]
     async fn populate_account_data(
         api: &dt_api::Api,
         accounts: &mut Accounts,
@@ -146,7 +144,7 @@ impl<T: AuthStorage + Clone> AuthManager<T> {
                         self.auth_data.auths.remove(&auth.sub)?;
                     } else {
                         info!(sub = ?auth.sub, "Adding auth");
-                        Self::insert_new_refresh_auth(&mut auths, &auth).await?;
+                        Self::insert_new_refresh_auth(&mut auths, &auth).await;
                         Self::populate_account_data(&self.api, &mut self.accounts, &auth).await?;
                     }
                 }
@@ -247,10 +245,12 @@ impl<T: AuthStorage> AuthData<T> {
             .context("Failed to send shutdown")
     }
 
+    #[instrument(skip(self))]
     pub fn get(&self, id: AccountId) -> Result<Option<Auth>> {
         self.auths.get(id)
     }
 
+    #[instrument(skip(self))]
     pub fn get_single(&self) -> Result<Option<AccountId>> {
         self.auths.get_single()
     }
@@ -260,6 +260,7 @@ impl<T: AuthStorage> AuthData<T> {
         self.auths.contains(id)
     }
 
+    #[instrument(skip(self))]
     async fn insert(&mut self, id: AccountId, auth: Auth) -> Result<()> {
         self.auths.insert(id, auth)
     }
