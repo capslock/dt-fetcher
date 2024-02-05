@@ -1,5 +1,7 @@
 # dt-fetcher
 
+[![CI](https://github.com/capslock/dt-fetcher/actions/workflows/ci.yml/badge.svg)](https://github.com/capslock/dt-fetcher/actions?query=workflow%3ACI+event%3Apush)
+
 ## Install
 
 ```console
