@@ -133,9 +133,24 @@ async fn main() -> Result<()> {
     let serve_task = tokio::spawn(server.start());
     let auth_task = tokio::spawn(auth_manager.start());
     let exit_task = tokio::spawn(async move {
-        tokio::signal::ctrl_c()
-            .await
-            .context("ctrl_c handler failed")?;
+        let interrupt = {
+            #[cfg(target_family = "unix")]
+            {
+                async {
+                    let mut signal =
+                        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
+                            .context("Failed to create interrupt signal handler")?;
+                    signal.recv().await;
+                    Result::<()>::Ok(())
+                }
+            }
+            #[cfg(not(target_family = "unix"))]
+            future::pending::<()>()
+        };
+        tokio::select! {
+            _ = interrupt => {},
+            res = tokio::signal::ctrl_c() => res.context("ctrl_c handler failed")?,
+        };
         auth_data
             .shutdown()
             .await
