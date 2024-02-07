@@ -14,9 +14,7 @@ pub(crate) async fn put_auth<T: AuthStorage>(
     State(state): State<AuthData<T>>,
     Json(auth): Json<dt_api::Auth>,
 ) -> StatusCode {
-    let result = state
-        .contains(&id)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR);
+    let result = state.contains(&id);
     if let Ok(true) = result {
         return StatusCode::OK;
     } else if let Err(e) = result {
@@ -34,9 +32,7 @@ pub(crate) async fn get_auth<T: AuthStorage>(
     Path(id): Path<AccountId>,
     State(state): State<AuthData<T>>,
 ) -> StatusCode {
-    let result = state
-        .contains(&id)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR);
+    let result = state.contains(&id);
     if let Ok(true) = result {
         StatusCode::OK
     } else if let Err(e) = result {
