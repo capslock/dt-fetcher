@@ -5,6 +5,7 @@ use uuid::Uuid;
 
 use crate::models::Link;
 
+/// Gender enum
 #[derive(Copy, Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Gender {
@@ -12,6 +13,7 @@ pub enum Gender {
     Male,
 }
 
+/// Character id wrapper type
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Copy)]
 #[serde(transparent)]
 pub struct CharacterId(pub Uuid);
@@ -22,6 +24,7 @@ impl Display for CharacterId {
     }
 }
 
+/// Character model
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Character {
     pub id: CharacterId,
@@ -32,17 +35,20 @@ pub struct Character {
     pub level: u32,
 }
 
+/// Email model
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Email {
     pub verified: bool,
 }
 
+/// Linked accounts model
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LinkedAccounts {
     pub steam: String,
     pub twitch: String,
 }
 
+/// Marketing preferences model
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MarketingPreferences {
@@ -51,6 +57,7 @@ pub struct MarketingPreferences {
     pub terms_agreed: bool,
 }
 
+/// Summary model
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Summary {

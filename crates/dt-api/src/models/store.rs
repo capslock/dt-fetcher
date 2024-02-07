@@ -7,6 +7,7 @@ use uuid::Uuid;
 
 use crate::models::Link;
 
+/// Enum for currency type
 #[derive(PartialEq, Eq, Copy, Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CurrencyType {
@@ -23,10 +24,12 @@ impl std::fmt::Display for CurrencyType {
     }
 }
 
+/// Catalog id wrapper type
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Copy)]
 #[serde(transparent)]
 pub struct CatalogId(pub Uuid);
 
+/// Catalog model
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Catalog {
@@ -38,6 +41,7 @@ pub struct Catalog {
     pub valid_to: String,
 }
 
+/// Amount model
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Amount {
     pub amount: i32,
@@ -45,10 +49,12 @@ pub struct Amount {
     pub amount_type: CurrencyType,
 }
 
+/// Price id wrapper type
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Copy)]
 #[serde(transparent)]
 pub struct PriceId(pub Uuid);
 
+/// Price model
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Price {
@@ -58,10 +64,12 @@ pub struct Price {
     pub price_formula: Option<String>,
 }
 
+/// Entitlement id wrapper type
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Copy)]
 #[serde(transparent)]
 pub struct EntitlementId(pub Uuid);
 
+/// Entitlement model
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Entitlement {
@@ -71,12 +79,14 @@ pub struct Entitlement {
     pub entitlement_type: String,
 }
 
+/// Stat model
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Stat {
     pub name: String,
     pub value: f64,
 }
 
+/// Trait model
 #[skip_serializing_none]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Trait {
@@ -85,12 +95,14 @@ pub struct Trait {
     pub value: Option<f64>,
 }
 
+/// Perk model
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Perk {
     pub id: String,
     pub rarity: i32,
 }
 
+/// Override model
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Override {
@@ -106,6 +118,7 @@ pub struct Override {
     pub perks: Vec<Perk>,
 }
 
+/// Weapon override model
 #[skip_serializing_none]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WeaponOverride {
@@ -114,6 +127,7 @@ pub struct WeaponOverride {
     pub base_stats: Vec<Stat>,
 }
 
+/// Overrides enum
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(untagged)]
 #[serde(deny_unknown_fields)]
@@ -124,10 +138,12 @@ pub enum Overrides {
     None {},
 }
 
+/// Gear id wrapper type
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Copy)]
 #[serde(transparent)]
 pub struct GearId(pub Uuid);
 
+/// Description model
 #[skip_serializing_none]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -141,10 +157,12 @@ pub struct Description {
     pub overrides: Overrides,
 }
 
+/// Sku id wrapper type
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Copy)]
 #[serde(transparent)]
 pub struct SkuId(pub Uuid);
 
+/// Sku model
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Sku {
@@ -159,10 +177,12 @@ pub struct Sku {
     pub dlc_req: Vec<String>,
 }
 
+/// Offer id wrapper type
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Copy)]
 #[serde(transparent)]
 pub struct OfferId(pub Uuid);
 
+/// Offer model
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Offer {
@@ -175,6 +195,7 @@ pub struct Offer {
     pub media: Vec<serde_json::Value>,
 }
 
+/// Store model
 #[serde_as]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

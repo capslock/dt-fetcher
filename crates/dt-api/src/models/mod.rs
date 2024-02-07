@@ -11,11 +11,13 @@ pub use store::*;
 mod master_data;
 pub use master_data::*;
 
+/// Link model
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Link {
     pub href: String,
 }
 
+/// Account id wrapper type
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Hash, Copy)]
 #[serde(transparent)]
 pub struct AccountId(pub uuid::Uuid);
