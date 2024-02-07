@@ -49,24 +49,43 @@ pub enum Error {
     },
 }
 
+/// Result type for API operations.
 pub type Result<T> = std::result::Result<T, Error>;
 
+/// Authentication token and account auth information.
 #[skip_serializing_none]
 #[serde_as]
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct Auth {
+    /// The JWT access token.
     pub access_token: String,
+    /// The name of the account.
     pub account_name: String,
+    /// The duration until the access token expires.
     #[serde_as(as = "DurationSeconds<u64>")]
     pub expires_in: Duration,
+    /// The time when the access token should be refreshed.
     #[serde_as(as = "Option<TimestampMilliSeconds<i64, Strict>>")]
     pub refresh_at: Option<DateTime<Utc>>,
+    /// The JWT refresh token.
     pub refresh_token: String,
+    /// The subject of the JWT.
     pub sub: AccountId,
 }
 
 impl Auth {
+    /// Returns true if the access token is expired.
+    ///
+    /// If the `refresh_at` field is not set, the token is considered expired.
+    ///
+    /// # Parameters
+    ///
+    /// - `buffer` - The buffer to use when checking if the token is expired.
+    ///
+    /// # Returns
+    ///
+    /// True if the token is expired, false otherwise.
     pub fn expired(&self, buffer: Duration) -> bool {
         self.refresh_at
             .map(|refresh_at| refresh_at <= Utc::now() + buffer)
@@ -87,12 +106,14 @@ impl std::fmt::Debug for Auth {
     }
 }
 
+/// API client for interacting with the DT Api.
 #[derive(Clone, Debug)]
 pub struct Api {
     client: reqwest::Client,
 }
 
 impl Api {
+    /// Creates a new API client.
     #[instrument]
     pub fn new() -> Self {
         Self {
@@ -100,6 +121,19 @@ impl Api {
         }
     }
 
+    /// Gets the summary for the account.
+    ///
+    /// # Parameters
+    ///
+    /// - `auth` - The authentication token.
+    ///
+    /// # Returns
+    ///
+    /// The summary for the account.
+    ///
+    /// # Errors
+    ///
+    /// An error is returned if the request fails or the server returns an error response.
     #[instrument(skip(self))]
     pub async fn get_summary(&self, auth: &Auth) -> Result<models::Summary> {
         let url = format!("https://bsp-td-prod.atoma.cloud/web/{}/summary", auth.sub.0);
@@ -137,6 +171,21 @@ impl Api {
         }
     }
 
+    /// Gets the store for the character.
+    ///
+    /// # Parameters
+    ///
+    /// - `auth` - The authentication token.
+    /// - `currency_type` - The type of currency to get the store for.
+    /// - `character` - The character to get the store for.
+    ///
+    /// # Returns
+    ///
+    /// The store for the character.
+    ///
+    /// # Errors
+    ///
+    /// An error is returned if the request fails or the server returns an error response.
     #[instrument(skip(self))]
     pub async fn get_store(
         &self,
@@ -188,6 +237,19 @@ impl Api {
         }
     }
 
+    /// Gets the master data.
+    ///
+    /// # Parameters
+    ///
+    /// - `auth` - The authentication token.
+    ///
+    /// # Returns
+    ///
+    /// The master data.
+    ///
+    /// # Errors
+    ///
+    /// An error is returned if the request fails or the server returns an error response.
     #[instrument(skip(self))]
     pub async fn get_master_data(&self, auth: &Auth) -> Result<models::MasterData> {
         let url = "https://bsp-td-prod.atoma.cloud/master-data/meta/items";
@@ -221,6 +283,19 @@ impl Api {
         }
     }
 
+    /// Refreshes the authentication token.
+    ///
+    /// # Parameters
+    ///
+    /// - `auth` - The authentication token to refresh.
+    ///
+    /// # Returns
+    ///
+    /// The refreshed authentication token.
+    ///
+    /// # Errors
+    ///
+    /// An error is returned if the request fails or the server returns an error response.
     #[instrument(skip(self))]
     pub async fn refresh_auth(&self, auth: &Auth) -> Result<Auth> {
         let url = "https://bsp-auth-prod.atoma.cloud/queue/refresh";
