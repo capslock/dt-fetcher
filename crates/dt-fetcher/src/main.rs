@@ -132,32 +132,7 @@ async fn main() -> Result<()> {
 
     let serve_task = tokio::spawn(server.start());
     let auth_task = tokio::spawn(auth_manager.start());
-    let exit_task = tokio::spawn(async move {
-        let interrupt = {
-            #[cfg(target_family = "unix")]
-            {
-                async {
-                    let mut signal =
-                        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
-                            .context("Failed to create interrupt signal handler")?;
-                    signal.recv().await;
-                    Result::<()>::Ok(())
-                }
-            }
-            #[cfg(not(target_family = "unix"))]
-            future::pending::<()>()
-        };
-        tokio::select! {
-            _ = interrupt => {},
-            res = tokio::signal::ctrl_c() => res.context("ctrl_c handler failed")?,
-        };
-        auth_data
-            .shutdown()
-            .await
-            .context("sending shutdown signal failed")?;
-        future::pending::<()>().await;
-        Result::<()>::Ok(())
-    });
+    let exit_task = tokio::spawn(exit_handler(auth_data));
 
     info!("Listening on {}", args.listen_addr);
 
@@ -172,4 +147,31 @@ async fn main() -> Result<()> {
         }
         Err(e) => Err(e.context("Task failed")),
     }
+}
+
+async fn exit_handler(auth_data: AuthData<ErasedAuthStorage>) -> Result<()> {
+    let interrupt = {
+        #[cfg(target_family = "unix")]
+        {
+            async {
+                let mut signal =
+                    tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
+                        .context("Failed to create interrupt signal handler")?;
+                signal.recv().await;
+                Result::<()>::Ok(())
+            }
+        }
+        #[cfg(not(target_family = "unix"))]
+        future::pending::<()>()
+    };
+    tokio::select! {
+        _ = interrupt => {},
+        res = tokio::signal::ctrl_c() => res.context("ctrl_c handler failed")?,
+    };
+    auth_data
+        .shutdown()
+        .await
+        .context("sending shutdown signal failed")?;
+    future::pending::<()>().await;
+    Ok(())
 }
