@@ -17,10 +17,12 @@ pub(crate) async fn put_auth<T: AuthStorage>(
     let result = state.contains(&id);
     if let Ok(true) = result {
         return StatusCode::OK;
-    } else if let Err(e) = result {
+    }
+    if let Err(e) = result {
         error!("Failed to check if auth exists: {}", e);
         return StatusCode::INTERNAL_SERVER_ERROR;
-    } else if let Err(e) = state.add_auth(auth).await {
+    }
+    if let Err(e) = state.add_auth(auth).await {
         error!("Failed to add auth: {}", e);
         return StatusCode::INTERNAL_SERVER_ERROR;
     }
