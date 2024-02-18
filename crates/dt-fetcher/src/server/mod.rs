@@ -43,7 +43,7 @@ impl<T: AuthStorage> FromRef<AppData<T>> for crate::account::Accounts {
     }
 }
 
-pub struct Server {
+pub(crate) struct Server {
     app: Router<()>,
     listen_addr: SocketAddr,
 }

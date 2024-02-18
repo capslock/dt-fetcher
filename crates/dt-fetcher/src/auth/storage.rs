@@ -7,7 +7,7 @@ use tracing::instrument;
 
 use dt_api::{models::AccountId, Auth};
 
-pub trait AuthStorage: Send + Sync + DynClone + 'static {
+pub(crate) trait AuthStorage: Send + Sync + DynClone + 'static {
     fn get(&self, id: AccountId) -> Result<Option<Auth>>;
 
     fn get_single(&self) -> Result<Option<AccountId>>;

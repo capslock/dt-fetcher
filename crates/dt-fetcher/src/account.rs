@@ -9,7 +9,7 @@ use tracing::error;
 use tracing::{info, instrument};
 
 #[derive(Debug, Clone)]
-pub struct AccountData {
+pub(crate) struct AccountData {
     pub last_updated: DateTime<Utc>,
     pub summary: Arc<RwLock<dt_api::models::Summary>>,
     pub marks_store: Arc<RwLock<HashMap<CharacterId, dt_api::models::Store>>>,
@@ -91,7 +91,7 @@ impl AccountData {
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct Accounts(Arc<RwLock<HashMap<AccountId, AccountData>>>);
+pub(crate) struct Accounts(Arc<RwLock<HashMap<AccountId, AccountData>>>);
 
 impl Accounts {
     #[instrument]
