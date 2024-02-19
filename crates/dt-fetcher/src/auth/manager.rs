@@ -153,6 +153,7 @@ impl<T: AuthStorage + Clone> AuthManager<T> {
                 }
             }
         }
+        let mut shutdown = false;
         loop {
             let sleep = if let Some(refresh_auth) = auths.peek() {
                 let duration = (refresh_auth.refresh_at - DateTime::from(SystemTime::now()))
@@ -178,9 +179,14 @@ impl<T: AuthStorage + Clone> AuthManager<T> {
                     Some(AuthCommand::NewAuth(auth)) => self.insert_new_auth(&mut auths, auth).await?,
                     Some(AuthCommand::Shutdown) => {
                         info!("Shutting down auth manager");
-                        return Ok(())
+                        shutdown = true;
+                        self.rx.close();
                     }
                     None => {
+                        if shutdown {
+                            info!("Auth manager channel closed");
+                            return Ok(());
+                        }
                         warn!("Auth manager channel closed");
                         return Err(anyhow!("Auth manager channel closed"));
                     }
