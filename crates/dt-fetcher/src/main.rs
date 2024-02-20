@@ -3,7 +3,7 @@ use std::{net::SocketAddr, path::PathBuf};
 use anyhow::{Context, Result};
 use clap::Parser;
 use figment::{providers::Format, Figment};
-use futures_util::future;
+use tokio_util::sync::CancellationToken;
 use tracing::info;
 use tracing::metadata::LevelFilter;
 use tracing_subscriber::{prelude::*, EnvFilter};
@@ -130,26 +130,24 @@ async fn main() -> Result<()> {
 
     info!("Starting server");
 
-    let serve_task = tokio::spawn(server.start());
-    let auth_task = tokio::spawn(auth_manager.start());
-    let exit_task = tokio::spawn(exit_handler(auth_data));
+    let token = CancellationToken::new();
+
+    let serve_task = tokio::spawn(server.start(token.clone()));
+    let auth_task = tokio::spawn(auth_manager.start(token.clone()));
+    let exit_task = tokio::spawn(exit_handler(token));
 
     info!("Listening on {}", args.listen_addr);
 
-    match tokio::select! {
-        res = auth_task => res?.context("Auth manager failed"),
-        res = serve_task => res?.context("Server failed"),
-        res = exit_task => res?.context("Exit task failed"),
-    } {
+    match tokio::try_join!(auth_task, serve_task, exit_task) {
         Ok(_) => {
             info!("Exiting");
             Ok(())
         }
-        Err(e) => Err(e.context("Task failed")),
+        Err(e) => Err(e)?,
     }
 }
 
-async fn exit_handler(auth_data: AuthData<ErasedAuthStorage>) -> Result<()> {
+async fn exit_handler(token: CancellationToken) -> Result<()> {
     let interrupt = {
         #[cfg(target_family = "unix")]
         {
@@ -168,10 +166,6 @@ async fn exit_handler(auth_data: AuthData<ErasedAuthStorage>) -> Result<()> {
         _ = interrupt => {},
         res = tokio::signal::ctrl_c() => res.context("ctrl_c handler failed")?,
     };
-    auth_data
-        .shutdown()
-        .await
-        .context("sending shutdown signal failed")?;
-    future::pending::<()>().await;
+    token.cancel();
     Ok(())
 }

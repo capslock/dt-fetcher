@@ -8,6 +8,7 @@ use chrono::{DateTime, Utc};
 use dt_api::{models::AccountId, Auth};
 use futures_util::future::{self, Either};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info, instrument, warn};
 
 use crate::account::{AccountData, Accounts};
@@ -48,7 +49,6 @@ impl Ord for RefreshAuth {
 #[derive(Debug)]
 pub(crate) enum AuthCommand {
     NewAuth(Auth),
-    Shutdown,
 }
 
 #[derive(Debug)]
@@ -134,7 +134,7 @@ impl<T: AuthStorage + Clone> AuthManager<T> {
     }
 
     #[instrument(skip_all)]
-    pub async fn start(mut self) -> Result<()> {
+    pub async fn start(mut self, token: CancellationToken) -> Result<()> {
         let mut auths: BinaryHeap<RefreshAuth> = BinaryHeap::new();
         for auth in self.auth_data.auths.iter() {
             match auth {
@@ -177,11 +177,6 @@ impl<T: AuthStorage + Clone> AuthManager<T> {
             tokio::select! {
                 command = self.rx.recv() => match command {
                     Some(AuthCommand::NewAuth(auth)) => self.insert_new_auth(&mut auths, auth).await?,
-                    Some(AuthCommand::Shutdown) => {
-                        info!("Shutting down auth manager");
-                        shutdown = true;
-                        self.rx.close();
-                    }
                     None => {
                         if shutdown {
                             info!("Auth manager channel closed");
@@ -191,6 +186,11 @@ impl<T: AuthStorage + Clone> AuthManager<T> {
                         return Err(anyhow!("Auth manager channel closed"));
                     }
                 },
+                _ = token.cancelled() => {
+                    info!("Shutting down auth manager");
+                    shutdown = true;
+                    self.rx.close();
+                }
                 _ = sleep => {
                     if let Err(e) = self.refresh_auth(&mut auths).await {
                         error!(error = %e, "Failed to refresh auth");
@@ -241,14 +241,6 @@ impl<T: AuthStorage> AuthData<T> {
             .send(AuthCommand::NewAuth(auth))
             .await
             .context("Failed to send auth")
-    }
-
-    #[instrument(skip(self))]
-    pub async fn shutdown(&self) -> Result<()> {
-        self.tx
-            .send(AuthCommand::Shutdown)
-            .await
-            .context("Failed to send shutdown")
     }
 
     #[instrument(skip(self))]

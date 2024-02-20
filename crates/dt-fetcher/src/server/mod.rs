@@ -9,6 +9,7 @@ use axum::{
     Json, Router,
 };
 use dt_api::models::{AccountId, MasterData, Summary};
+use tokio_util::sync::CancellationToken;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::{error, Span};
 use tracing::{info, instrument};
@@ -110,10 +111,12 @@ impl Server {
     }
 
     #[instrument(skip_all)]
-    pub async fn start(self) -> Result<()> {
+    pub async fn start(self, token: CancellationToken) -> Result<()> {
         let listener = tokio::net::TcpListener::bind(self.listen_addr).await?;
 
-        axum::serve(listener, self.app).await?;
+        axum::serve(listener, self.app)
+            .with_graceful_shutdown(token.cancelled_owned())
+            .await?;
 
         Ok(())
     }
