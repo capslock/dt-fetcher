@@ -160,7 +160,7 @@ async fn exit_handler(token: CancellationToken) -> Result<()> {
             }
         }
         #[cfg(not(target_family = "unix"))]
-        future::pending::<()>()
+        futures_util::future::pending::<()>()
     };
     tokio::select! {
         _ = interrupt => {},
